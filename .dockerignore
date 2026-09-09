@@ -1,0 +1,12 @@
+.venv
+.pytest_cache
+.git
+.gitignore
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.DS_Store
+.env
+render.yaml
+README.md
