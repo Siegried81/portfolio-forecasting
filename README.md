@@ -51,7 +51,7 @@ the other.
 ## Setup
 
 ```bash
-git clone <your-repo-url> && cd portfolio-forecasting
+git clone https://github.com/Siegried81/portfolio-forecasting && cd portfolio-forecasting
 python3 -m venv .venv && source .venv/bin/activate     # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 cp .env.example .env                                     # then fill in your keys, see below
