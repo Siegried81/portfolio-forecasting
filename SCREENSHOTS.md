@@ -17,20 +17,20 @@ against the rest on GitHub.
 **Overview — Fundamentals**
 <img src="images/fundamentals.png" width="900" alt="Per-ticker fundamentals table: market cap, P/E, beta, dividend yield, 52-week range">
 
-**Sidebar — key controls**
-<img src="images/sidebar_controls.png" width="900" alt="Risk-free rate, max weight per asset, short selling, transaction cost, forecast horizon and model, walk-forward windows, covariance estimator">
+**Sidebar — key controls & forecast model selector**
+<table><tr>
+<td><img src="images/sidebar_controls.png" width="440" alt="Risk-free rate, max weight per asset, short selling, transaction cost, forecast horizon, walk-forward windows, covariance estimator"></td>
+<td><img src="images/forecast_model_selector.png" width="440" alt="The six forecast models: Naive, ETS, Theta, ARIMA, ML regression, LSTM"></td>
+</tr></table>
 
-**Sidebar — forecast model selector**
-<img src="images/forecast_model_selector.png" width="900" alt="The six forecast models: Naive, ETS, Theta, ARIMA, ML regression, LSTM">
-
-**Efficient Frontier — with factor exposure**
-<img src="images/efficient_frontier.png" width="900" alt="Mean-variance efficient frontier with optimal weights, diversification ratio, and HHI">
+**Efficient Frontier — with optimal weights**
+<table><tr>
+<td><img src="images/weights.png" width="300" alt="Optimal portfolio weights table, long and short positions"></td>
+<td><img src="images/efficient_frontier.png" width="580" alt="Mean-variance efficient frontier with diversification ratio and HHI"></td>
+</tr></table>
 
 **Efficient Frontier — Fama-French factor exposure**
 <img src="images/factor_exposure.png" width="900" alt="Factor exposure expander: 3-factor Fama-French loadings, annualised alpha, R-squared">
-
-**Efficient Frontier — optimal weights**
-<img src="images/weights.png" width="900" alt="Optimal portfolio weights table, long and short positions">
 
 **Forecast & Compare — the three-portfolio comparison**
 <img src="images/forecast_compare.png" width="900" alt="Historical vs forecast-based vs realized-optimal portfolio comparison table and chart">
@@ -45,7 +45,7 @@ against the rest on GitHub.
 <img src="images/AI_portfolio_analyst.png" width="900" alt="LLM-generated portfolio commentary and cross-referenced, per-ticker news digest">
 
 **AI Analyst — sentiment by ticker**
-<img src="images/sentiment_sources.png" width="900" alt="News sentiment by ticker (FinBERT financial-domain model, falling back to Finnhub aggregated then local VADER), tagged by source">
+<img src="images/sentiment_sources.png" width="650" alt="News sentiment by ticker (FinBERT financial-domain model, falling back to Finnhub aggregated then local VADER), tagged by source">
 
 **AI Analyst — sources**
 <img src="images/sources.png" width="900" alt="Every headline/filing behind the digest, tagged by provider (NewsAPI, Finnhub, SEC EDGAR, GDELT, Google News, TED), linking out to the original">
