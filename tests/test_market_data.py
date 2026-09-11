@@ -488,6 +488,7 @@ def test_fetch_fundamentals_fills_gap_via_twelvedata_end_to_end(monkeypatch):
         market_data, "_fetch_twelvedata_fundamentals",
         lambda ticker: {"forward_pe": 34.5, "peg_ratio": None, "price_to_book": None},
     )
+    monkeypatch.setattr(market_data, "_fetch_yfinance_fundamentals", lambda ticker: None)
     result = fetch_fundamentals("AAPL")
     assert result["forward_pe"] == 34.5
     assert result["source"] == "Finnhub + Twelve Data"
