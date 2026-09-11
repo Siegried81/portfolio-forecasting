@@ -58,13 +58,11 @@ comparison of how each model's forecast behaves on identical data.
 
 <br>
 
-**AI Analyst — sentiment by ticker**
-<img src="images/sentiment_sources.png" width="550" alt="News sentiment by ticker (FinBERT financial-domain model), tagged by source">
-
-<br>
-
-**AI Analyst — sources**
-<img src="images/sources.png" width="1000" alt="Every headline/filing behind the digest, tagged by provider (NewsAPI, Finnhub, SEC EDGAR, GDELT, Google News, TED), linking out to the original">
+**AI Analyst — sentiment by ticker and sources**
+<table><tr>
+<td><img src="images/sentiment_sources.png" width="500" alt="News sentiment by ticker (FinBERT financial-domain model), tagged by source"></td>
+<td><img src="images/sources.png" width="500" alt="Every headline/filing behind the digest, tagged by provider (NewsAPI, Finnhub, SEC EDGAR, GDELT, Google News, TED), linking out to the original"></td>
+</tr></table>
 
 <br>
 
