@@ -76,7 +76,7 @@ GDP_GROWTH_SERIES_ID = "A191RL1Q225SBEA"  # Real GDP, % change from preceding
 # above, so the shared divide_by=100 default applies correctly here too.
 
 INDUSTRIAL_PRODUCTION_SERIES_ID = "INDPRO"  # Industrial Production Index —
-# ADDED AS AN ISM MANUFACTURING PMI PROXY, and documented honestly as a
+# used as an ISM Manufacturing PMI proxy, and documented honestly as a
 # substitution rather than left implicit: ISM's own PMI is a proprietary,
 # paid survey-based series, NOT available on FRED or any free API. Industrial
 # Production is the closest legitimate free alternative — real, hard output
@@ -171,8 +171,14 @@ def _fetch_fred_yoy_change(series_id: str) -> float | None:
 @cached(ttl_seconds=6 * 3600)
 def fetch_current_risk_free_rate() -> float | None:
     """Latest published 3-month T-bill yield, as a decimal annual rate (e.g. 0.0412
-    for 4.12%). Returns None if no FRED_API_KEY is set or the request fails."""
-    return _fetch_fred_series_latest(RISK_FREE_SERIES_ID)
+    for 4.12%). Returns None if no FRED_API_KEY is set or the request fails.
+
+    Delegates to `fetch_macro_snapshot()` rather than fetching the same series
+    independently: sharing one cached fetch keeps the sidebar's risk-free-rate
+    slider and the Macro & Risk panel's own displayed yield structurally unable
+    to disagree, even if a single request to FRED happens to fail transiently.
+    """
+    return fetch_macro_snapshot()["three_month_yield"]
 
 
 @cached(ttl_seconds=6 * 3600)

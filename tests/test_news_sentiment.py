@@ -1,14 +1,4 @@
-"""
-Unit tests for the news-sentiment cascade in src/news_data.py.
-
-Priority: the FALLBACK behavior, since that's what makes "not available" an
-honest signal rather than a silently-wrong neutral score. Also covers the
-2026-09-08 circuit breaker (`_finnhub_sentiment_plan_restricted`), added
-after live confirmation that Finnhub's `/news-sentiment` 403s on every ticker
-on this app's free-tier account — same spirit as market_data.py's Yahoo
-circuit breaker: a plan-restriction is an account-wide fact, so a confirmed
-403/401 should stop repeating a call already known to fail.
-"""
+"""Unit tests for the news-sentiment cascade in src/news_data.py — priority on fallback behavior and the circuit breaker."""
 import dataclasses
 
 import pytest
@@ -27,10 +17,6 @@ from src.news_data import (
 
 @pytest.fixture(autouse=True)
 def _reset_finnhub_sentiment_state(monkeypatch):
-    """Isolate every test from the module-level circuit breaker and
-    Streamlit's process-wide cache — both shared state that would otherwise
-    leak between tests depending on execution order (same pattern as
-    test_market_data.py's own _reset_module_state fixture)."""
     st.cache_data.clear()
     monkeypatch.setattr(news_data, "_finnhub_sentiment_plan_restricted", False)
     fake_settings = dataclasses.replace(
@@ -49,7 +35,7 @@ class _FakeResponse:
     def raise_for_status(self):
         if self.status_code >= 400:
             error = requests.HTTPError(f"{self.status_code} error")
-            error.response = self  # type: ignore[assignment]  — enough surface for .response.status_code
+            error.response = self  # type: ignore[assignment]
             raise error
 
     def json(self):
@@ -87,7 +73,7 @@ def test_compute_local_sentiment_negative_for_clearly_negative_headlines():
 
 
 # ---------------------------------------------------------------------------
-# get_ticker_sentiment — the FinBERT -> Finnhub -> VADER -> None cascade
+# get_ticker_sentiment — FinBERT -> Finnhub -> VADER -> None
 # ---------------------------------------------------------------------------
 
 def test_get_ticker_sentiment_prefers_finbert_when_available(monkeypatch):
@@ -124,7 +110,7 @@ def test_get_ticker_sentiment_none_when_every_source_has_nothing(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# _trip_finnhub_sentiment_breaker_if_permanent — the status-code decision
+# _trip_finnhub_sentiment_breaker_if_permanent
 # ---------------------------------------------------------------------------
 
 @pytest.mark.parametrize("status", [401, 403])
@@ -146,15 +132,13 @@ def test_does_not_trip_breaker_on_transient_status_codes(monkeypatch, status):
 
 
 def test_does_not_trip_breaker_when_response_is_missing():
-    # A connection-level HTTPError with no .response at all — must degrade
-    # to "not permanent" rather than crash on a None.status_code access.
     error = requests.HTTPError("no response object")
     _trip_finnhub_sentiment_breaker_if_permanent(error)
     assert news_data._finnhub_sentiment_plan_restricted is False
 
 
 # ---------------------------------------------------------------------------
-# fetch_finnhub_sentiment — the circuit breaker end to end
+# fetch_finnhub_sentiment — circuit breaker end to end
 # ---------------------------------------------------------------------------
 
 def test_fetch_finnhub_sentiment_trips_breaker_on_403_and_skips_later_tickers(monkeypatch):
@@ -170,12 +154,9 @@ def test_fetch_finnhub_sentiment_trips_breaker_on_403_and_skips_later_tickers(mo
     assert first is None
     assert call_count["n"] == 1
 
-    # A DIFFERENT ticker, still within the same process — must skip the
-    # network call entirely now that the breaker has tripped, not repeat a
-    # 403 already known to happen.
     second = fetch_finnhub_sentiment("MSFT")
     assert second is None
-    assert call_count["n"] == 1  # unchanged — no second network call
+    assert call_count["n"] == 1
 
 
 def test_fetch_finnhub_sentiment_does_not_trip_breaker_on_rate_limit(monkeypatch):
@@ -189,7 +170,6 @@ def test_fetch_finnhub_sentiment_does_not_trip_breaker_on_rate_limit(monkeypatch
 
     fetch_finnhub_sentiment("AAPL")
     fetch_finnhub_sentiment("MSFT")
-    # A 429 is transient — both tickers should still attempt the network call.
     assert call_count["n"] == 2
 
 
@@ -205,7 +185,7 @@ def test_fetch_finnhub_sentiment_skips_network_call_without_a_key(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# fetch_finbert_sentiment -- the middle tier (Finnhub -> FinBERT -> VADER)
+# fetch_finbert_sentiment
 # ---------------------------------------------------------------------------
 
 def _article(title="Company beats earnings", description="Strong quarter"):
@@ -256,19 +236,12 @@ def test_fetch_finbert_sentiment_computes_score_from_positive_negative_gap(monke
     result = fetch_finbert_sentiment([_article()])
     assert result is not None
     assert result["provider"].startswith("FinBERT")
-    assert result["score"] == pytest.approx(0.6, abs=1e-9)  # 0.7 - 0.1
+    assert result["score"] == pytest.approx(0.6, abs=1e-9)
     assert result["n_articles"] == 1
 
 def test_fetch_finbert_sentiment_unwraps_nested_list_response_shape(monkeypatch):
-    # REGRESSION test for the router.huggingface.co migration bug: this
-    # endpoint wraps a single-input result in an EXTRA list layer —
-    # [[{"label": ..., "score": ...}, ...]] — instead of the older
-    # api-inference.huggingface.co's flat [{"label": ..., "score": ...}, ...]
-    # (the shape every other test in this file, and _finbert_classes(), uses).
-    # Silently not unwrapping this made every ticker read "Neutral (score
-    # +0.00)": isinstance(item, dict) filtered out every element since each
-    # was itself a list, not a dict, leaving positive=negative=0.0 with no
-    # exception raised anywhere.
+    # router.huggingface.co wraps a single-input result in an extra list
+    # layer — [[{...}, ...]] instead of the older flat [{...}, ...].
     nested_payload = [_finbert_classes(positive=0.7, negative=0.1, neutral=0.2)]
     monkeypatch.setattr(
         news_data.requests, "post",
@@ -276,14 +249,13 @@ def test_fetch_finbert_sentiment_unwraps_nested_list_response_shape(monkeypatch)
     )
     result = fetch_finbert_sentiment([_article()])
     assert result is not None
-    assert result["score"] == pytest.approx(0.6, abs=1e-9)  # 0.7 - 0.1, same as the flat-shape test
-    
+    assert result["score"] == pytest.approx(0.6, abs=1e-9)
+
 def test_fetch_finbert_sentiment_averages_across_multiple_articles(monkeypatch):
     calls = {"n": 0}
 
     def _fake_post(url, headers=None, json=None, timeout=None):
         calls["n"] += 1
-        # first article very positive, second very negative -> average ~0
         if calls["n"] == 1:
             return _FinbertResponse(_finbert_classes(positive=0.9, negative=0.0, neutral=0.1))
         return _FinbertResponse(_finbert_classes(positive=0.0, negative=0.9, neutral=0.1))
@@ -319,7 +291,7 @@ def test_fetch_finbert_sentiment_skips_an_article_on_request_failure_but_keeps_g
     monkeypatch.setattr(news_data.requests, "post", _fake_post)
     result = fetch_finbert_sentiment([_article("first"), _article("second")])
     assert result is not None
-    assert result["n_articles"] == 1  # only the second article scored
+    assert result["n_articles"] == 1
 
 
 def test_fetch_finbert_sentiment_returns_none_when_every_article_fails(monkeypatch):
@@ -330,8 +302,6 @@ def test_fetch_finbert_sentiment_returns_none_when_every_article_fails(monkeypat
 
 
 def test_fetch_finbert_sentiment_handles_model_loading_cold_start_gracefully(monkeypatch):
-    # HF serverless Inference API's well-known 503 "model is currently loading"
-    # response body -- a dict, not the expected list-of-class-scores shape.
     monkeypatch.setattr(
         news_data.requests, "post",
         lambda *a, **k: _FinbertResponse({"error": "Model ProsusAI/finbert is currently loading"}),

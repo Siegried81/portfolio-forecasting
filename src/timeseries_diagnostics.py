@@ -52,9 +52,8 @@ def adf_stationarity_test(returns: pd.Series) -> dict[str, Any]:
     except Exception:
         return {"adf_statistic": None, "p_value": None, "is_stationary": None}
     # bool(...) matters here: p_value is numpy.float64, so p_value < 0.05 is a
-    # numpy.bool_, not a Python bool — `numpy.bool_(True) is True` is False
-    # (an identity check, not a value check), which silently breaks any
-    # caller doing `if result["is_stationary"] is True`.
+    # numpy.bool_, not a Python bool — `numpy.bool_(True) is True` is False, which
+    # would silently break any caller doing `if result["is_stationary"] is True`.
     return {"adf_statistic": float(statistic), "p_value": float(p_value), "is_stationary": bool(p_value < 0.05)}
 
 
@@ -68,16 +67,12 @@ def hurst_exponent(prices: pd.Series, max_lag: int = 20) -> float:
     deliberately, same spirit as other documented trade-offs in this codebase
     (e.g. TF-IDF vs neural embeddings in rag.py).
 
-    Scaling, precisely (this is the part worth getting right): for fractional
-    Brownian motion, Var[X(t+lag) - X(t)] scales as lag^(2H) BY DEFINITION —
-    so std(diff), which is what `tau` below actually is, scales as lag^H, not
-    lag^(2H). Regressing log(std(diff)) against log(lag) therefore recovers H
-    directly from the slope. Multiplying that slope by 2 (as an earlier
-    version of this function did) silently doubles the result — confirmed
-    numerically: a pure random walk (textbook H=0.5) computed as ~0.98 with
-    the erroneous ×2, ~0.495 without it. The ×2 factor only belongs in this
-    derivation if `tau` were the VARIANCE of lagged differences instead of
-    the standard deviation — it is not, here.
+    Scaling, precisely: for fractional Brownian motion, Var[X(t+lag) - X(t)]
+    scales as lag^(2H) by definition — so std(diff), which is what `tau`
+    below actually is, scales as lag^H, not lag^(2H). Regressing
+    log(std(diff)) against log(lag) therefore recovers H directly from the
+    slope; a ×2 factor would only belong here if `tau` were the VARIANCE of
+    lagged differences instead of the standard deviation — it is not.
 
     How to read it: H > 0.5 = trending/momentum (a move tends to be followed
     by a move in the same direction); H < 0.5 = mean-reverting (a move tends

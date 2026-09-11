@@ -1,15 +1,7 @@
 """
-check_env.py — a quick, human-readable report of which optional API keys
-are configured in this environment, and what each one turns on/off.
-
-Why this exists: every external key this app uses is OPTIONAL by design
-(see config.py and every fetcher's own "fails soft" docstring) — the app
-runs with zero keys configured, just with fewer features. That's the right
-production behaviour, but it makes it easy to forget you never actually set
-FRED_API_KEY and wonder for ten minutes why the macro panel looks empty.
-This script is the two-second answer to "what did I forget to configure?"
-before starting the app or opening a PR — nothing here is a hard gate; it
-always exits 0 and never blocks anything, it just tells you what's set.
+check_env.py — a quick report of which optional API keys are configured.
+Every key this app uses is optional by design; this is the two-second
+answer to "what did I forget to configure?" Always exits 0.
 
 Usage:
     python scripts/check_env.py
@@ -21,11 +13,9 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-# Make `src/` importable when this script is run directly (python scripts/check_env.py),
-# same pattern as scripts/benchmark_walk_forward.py.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from dotenv import load_dotenv  # noqa: E402  (import after sys.path fix, on purpose)
+from dotenv import load_dotenv  # noqa: E402
 
 load_dotenv()
 
@@ -36,12 +26,7 @@ class EnvCheck:
     var_name: str
     unlocks: str
     signup_url: str
-    required: bool = False  # True only for something the app cannot do ANYTHING
-    # useful without — as of this writing, nothing in this app meets that bar
-    # (even the AI Analyst tab has a local Ollama fallback that needs no key
-    # at all), so every entry below is currently False. Kept as a field
-    # rather than removed so a future genuinely-required key has somewhere
-    # to go without restructuring this script.
+    required: bool = False
 
 
 CHECKS: list[EnvCheck] = [
@@ -61,21 +46,18 @@ CHECKS: list[EnvCheck] = [
              "https://fred.stlouisfed.org/docs/api/api_key.html"),
     EnvCheck("TWELVEDATA_API_KEY", "Market-data fallback if Yahoo Finance is unreachable + fundamentals",
              "https://twelvedata.com/pricing"),
-    EnvCheck("TIINGO_API_KEY", "Market-data fallback, tier 3 — tried first among the fallbacks (most generous free tier)",
+    EnvCheck("TIINGO_API_KEY", "Market-data fallback, tried first among the fallbacks",
              "https://www.tiingo.com/account/api/token"),
-    EnvCheck("ALPHA_VANTAGE_API_KEY", "Market-data fallback, tier 4 — only tried if Yahoo, Tiingo AND Twelve Data all fail",
+    EnvCheck("ALPHA_VANTAGE_API_KEY", "Market-data fallback, last resort",
              "https://www.alphavantage.co/support/#api-key"),
     EnvCheck("SEMANTIC_SCHOLAR_API_KEY", "Academic citations — works unauthenticated too, a key just raises the rate limit",
              "https://www.semanticscholar.org/product/api#api-key-form"),
     EnvCheck("HUGGINGFACE_API_KEY", "FinBERT sentiment (middle tier of the sentiment cascade, before VADER)",
              "https://huggingface.co/settings/tokens"),
     EnvCheck("REDIS_URL", "Persistent cache across restarts/replicas (production next-step, not needed locally)",
-             "n/a — self-hosted or a managed Redis instance, e.g. Render's or Upstash's free tier"),
+             "n/a — self-hosted or a managed Redis instance"),
 ]
 
-# Every fetcher below needs NO key at all, ever — listed here purely so the
-# report is a complete picture of this app's data sources, not just the ones
-# that happen to need configuration.
 NO_KEY_NEEDED = [
     "yfinance (primary market data)", "SEC EDGAR (regulatory filings)",
     "GDELT (worldwide news index)", "Google News RSS (news search feed)",
@@ -104,9 +86,6 @@ def main() -> None:
 
     required_missing = [c for c in missing if c.required]
     if required_missing:
-        # Unreachable today (see EnvCheck.required's own comment) — kept as
-        # a real branch, not dead code, so a future required key is reported
-        # loudly instead of silently falling into the optional list above.
         print("\n⚠️  Missing required configuration:")
         for c in required_missing:
             print(f"  {c.var_name} — {c.unlocks}")

@@ -1,6 +1,5 @@
 #!/bin/bash
-# Build and run the Portfolio Forecasting Docker deployment.
-# Run from the repo root (no hardcoded machine-specific path — cd here yourself first).
+# Build and run the Portfolio Forecasting Docker deployment. Run from the repo root.
 
 set -e
 
@@ -12,8 +11,6 @@ PORT="8501"
 echo "=== Building Docker image for $PROJECT_NAME ==="
 echo "This may take 3-5 minutes due to large dependencies (scipy, cvxpy, statsmodels)..."
 
-# --verbose: stream the full, unbuffered build log (useful the first time you
-# build, or when a build fails and you need to see which layer broke).
 if [ "$1" == "--verbose" ]; then
     docker build -t "$IMAGE_NAME" . --progress=plain 2>&1 | tail -50
 else

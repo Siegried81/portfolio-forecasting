@@ -1,11 +1,6 @@
 # --- Core app ---
-# Minimum versions below (not exact pins): exact pins go stale fast as new Python
-# releases ship (this project hit that directly — pandas==2.2.2 predates Python 3.14
-# wheels entirely, forcing a slow from-source build that broke on newer GCC/Cython).
-# Minimums here are the first version of each package confirmed to support Python
-# 3.14 cleanly; pip will resolve to the latest compatible release above that floor.
 streamlit>=1.50.0
-pandas>=3.0.5      # 3.0.0-3.0.4 have a confirmed Python 3.14 segfault regression - need 3.0.5+
+pandas>=3.0.5
 numpy>=2.2
 python-dotenv>=1.0.1
 
@@ -14,63 +9,31 @@ yfinance>=0.2.43
 
 # --- Finance / optimization ---
 PyPortfolioOpt>=1.6.0
-scipy>=1.14         # first release with Python 3.13 wheels; 3.14 wheels followed
+scipy>=1.14
 
 # --- Forecasting ---
-# Upper bound is deliberate, not just a floor: statsmodels 0.15.0 has an internal
-# regression (a `deprecate_kwarg` signature mismatch in statsmodels.tsa.arima's
-# yule_walker estimator module) that breaks `from statsmodels.tsa.arima.model
-# import ARIMA` entirely - confirmed by testing. 0.14.6 has full Python 3.12-3.14 /
-# pandas 3.0 / numpy 2.x support without this bug.
 statsmodels>=0.14.4,<0.15.0
 
 # --- Visualisation ---
 plotly>=5.24.1
 
-# --- LLM (Groq primary, Ollama fallback via plain HTTP so no extra SDK needed for Ollama) ---
-groq>=1.0.0   # groq<1.0 breaks with httpx>=0.28 (removed the "proxies" kwarg groq<1.0 still passes)
+# --- LLM ---
+groq>=1.0.0
 requests>=2.32.3
-tiktoken>=0.8.0  # token counting, used to keep news context within LLM limits
-vaderSentiment>=3.3.2  # free, offline, lexicon-based news-sentiment fallback (no API key, no model download)
-# NOTE: OpenRouter/Cerebras/SambaNova (llm_client.py) and FinBERT (news_data.py) need
-# no extra package here — both are called via plain `requests` against a hosted HTTP
-# API (OpenAI-compatible chat completions / Hugging Face's Inference API), same
-# reasoning as Ollama above: no local model weights, no provider-specific SDK.
+tiktoken>=0.8.0
+vaderSentiment>=3.3.2
 
-# --- ML (used directly by rag.py's TF-IDF retrieval, factor_models.py's PCA,
-# AND forecasting.py's ml_regression_forecast's GradientBoostingRegressor/
-# RandomForestRegressor fallback) ---
-# Previously only an IMPLICIT transitive dependency via PyPortfolioOpt's cvxpy
-# stack — pinned explicitly now that three modules import it directly, so a
-# future PyPortfolioOpt release dropping that transitive dep can't silently
-# break either one.
+# --- ML (rag.py TF-IDF, factor_models.py PCA, forecasting.py ml_regression_forecast) ---
 scikit-learn>=1.5
-
-# --- Optional, stronger tree-ensemble backend for ml_regression_forecast ---
-# Imported lazily inside forecasting.py — its absence is not an error,
-# ml_regression_forecast(model_type="auto") falls straight back to
-# scikit-learn's GradientBoostingRegressor above with no other code change.
-# Included as a hard requirement here (not left truly optional) so CI and a
-# fresh install both exercise the XGBoost path, not just its fallback.
 xgboost>=2.0
 
 # --- Forecasted covariance (src/volatility_forecasting.py) ---
-# GARCH(1,1) per-asset volatility forecasting — see that module's docstring
-# for exactly what this does and doesn't forecast (volatility yes,
-# correlation still historical).
 arch>=6.3
 
-# --- LSTM price forecasting (src/forecasting.py's lstm_forecast) ---
-# CPU-only — no CUDA/GPU dependency, matching this app's free-tier-hosting
-# constraint (Render/Streamlit Cloud have no GPU). A small, from-scratch-trained
-# per-asset network, not a pretrained model — see lstm_forecast's own docstring
-# for the honest speed/complexity trade-off against naive/ETS/ARIMA.
+# --- LSTM price forecasting (src/forecasting.py) ---
 torch>=2.0
 
 # --- Optional production cache (src/cache.py) ---
-# Only used if REDIS_URL is set — imported lazily inside cache.py, so this
-# stays a no-op dependency for every deployment that doesn't set REDIS_URL
-# (i.e. every local/free-tier deployment today).
 redis>=5.0
 
 # --- Tests ---

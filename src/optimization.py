@@ -146,8 +146,7 @@ def optimize_max_sharpe(
     if lower < 0:
         # max_sharpe()'s internal convex reformulation (the Cornuejols-Tütüncü
         # auxiliary-variable trick) is documented to raise a spurious "infeasible"
-        # OptimizationError once the lower bound goes negative — confirmed
-        # directly against this exact mu/cov/bounds combination, and matches a
+        # OptimizationError once the lower bound goes negative — see the
         # long-standing open PyPortfolioOpt issue (github.com/robertmartin8/
         # PyPortfolioOpt/issues/436). max_quadratic_utility() uses a different,
         # unaffected formulation, so a small scan over risk_aversion values finds
@@ -219,9 +218,9 @@ def efficient_frontier_points(
     other at all. Sweeping target returns in that case asks the solver for
     expected returns the single feasible portfolio cannot produce, which
     PyPortfolioOpt correctly reports as `OptimizationError: Solver status:
-    infeasible` — not a bug in the solver, but a sweep that was never
-    meaningful to run here. Returning the single min-volatility point
-    directly sidesteps the sweep entirely for this case.
+    infeasible` — not a solver bug, but a sweep that isn't meaningful to run
+    for this case. Returning the single min-volatility point directly
+    sidesteps the sweep entirely here.
 
     A SECOND, separate infeasibility guard: an upper weight bound below
     1/N (e.g. a 35% per-asset cap with only 1-2 assets selected) makes even

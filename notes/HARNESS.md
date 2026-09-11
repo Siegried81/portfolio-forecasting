@@ -30,11 +30,11 @@ that context small and canonical, instead of scattering constants across the cod
 is what makes "give the assistant the right context" actually tractable.
 
 **3. A real feedback loop**
-`pytest` (300+ tests, `.github/workflows/ci.yml` running it on every push) plus `mypy`
-(non-blocking for now, see Known Limitations in the README) are the loop that turns
-"looks right" into "is right." Nearly every fix in this project's history was caught
-*because* a test failed, not because a human read the diff carefully enough to notice —
-see the recurring-errors log below for concrete examples from this exact repo.
+`pytest` (300+ tests, `.github/workflows/ci.yml` running it on every push) plus
+`mypy --strict` (blocking — the full suite passes clean) are the loop that turns "looks
+right" into "is right." Nearly every fix in this project's history was caught *because*
+a test — or, for one entry in this project's own log below, mypy itself — failed, not
+because a human read the diff carefully enough to notice.
 
 **4. Explicit guardrails — what NOT to do**
 Documented directly in code comments and the README's "Key design decisions" table,
@@ -70,11 +70,13 @@ doesn't rediscover the same failure mode from scratch.
 | 9 | `truncate_to_token_budget` could crash with an uncaught `HTTPError` instead of degrading | `_count_tokens` had a try/except fallback for a blocked `tiktoken` encoding download, but the truncation branch called `tiktoken.get_encoding()` a second time, unguarded | Any function documented as "fails soft" needs every one of its own internal calls to the same flaky dependency guarded, not just the first one — caught by a test that mocks the encoding call to fail |
 | 10 | A first implementation of the Theta forecasting method silently under-forecast any real trend — a pure linear-trend test case came back roughly half the true slope | Applied SES (Simple Exponential Smoothing, which has no trend term) directly to an amplified "theta line" derived from the raw series, instead of detrending first — SES has no way to extrapolate a slope it was never shown | Verify a new forecasting/statistical formula against a case with a KNOWN correct answer (here: a noiseless linear trend, where the right forecast is exactly computable by hand) before trusting it, not just checking it runs and produces plausible-looking numbers |
 | 11 | `efficient_frontier_points` crashed with `OptimizationError: Solver status: infeasible` the moment a single ticker was selected | The function always swept a RANGE of target returns to sample the frontier — with one asset, weight is forced to 100% and there is exactly one achievable return, so every other target in the sweep is mathematically infeasible by construction, not a solver problem | Any function that sweeps a range of targets over an optimizer needs an explicit degenerate-input check (here: `len(mu) < 2` or no spread between min/max achievable return) before the sweep, not just a try/except around each point |
+| 12 | Every ticker's news sentiment read "Neutral (score +0.00)" after migrating FinBERT off the deprecated `api-inference.huggingface.co` domain | The new `router.huggingface.co/hf-inference` endpoint wraps a single-input result in an extra list layer (`[[{"label": ..., "score": ...}, ...]]`) instead of the old flat shape (`[{"label": ..., "score": ...}, ...]`) — `isinstance(item, dict)` silently filtered out every element (each one a list, not a dict), leaving positive=negative=0.0 with no exception anywhere | Any response-shape assumption from a migrated/renamed API endpoint gets re-verified against a live capture, not assumed unchanged just because the request shape and status code still work — `fetch_finbert_sentiment` now unwraps one extra list layer when present, with a regression test covering both the old flat shape and the new nested one |
+| 13 | `mypy --strict` failed on `src/forecasting.py` the first time it was actually run against this exact codebase | `_get_gradient_boosted_regressor` returns one of two unrelated external classes (XGBoost's or scikit-learn's regressor) with no return-type annotation at all | Any helper returning a third-party type this module doesn't want to import at type-check time gets an explicit `-> Any` rather than an unannotated signature — silent under `--ignore-missing-imports` alone, but not under `--strict` |
 
 ## What this gets me, concretely
 
-- **For this bootcamp project**: every fix above shipped with a regression test, so none
-  of these seven mistakes can silently come back.
+- **For this bootcamp project**: every fix above shipped with a regression test (or, for #13,
+  a passing `mypy --strict` run), so none of these thirteen mistakes can silently come back.
 - **For an interview**: "I use AI to write code" is table stakes. "Here's my
   recurring-errors log with the actual root causes, and here's why my test suite is
   built to catch each one again" is a materially different, harder-to-fake claim — and

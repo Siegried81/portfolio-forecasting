@@ -1,11 +1,4 @@
-"""
-Unit tests for src/timeseries_diagnostics.py.
-
-Priority: does the ADF test correctly distinguish a stationary series from a
-random walk (the exact assumption forecasting.py's ARIMA d=1 choice rests
-on), and does the Hurst exponent correctly separate a trending series from a
-mean-reverting one — the two things this module exists to check.
-"""
+"""Unit tests for src/timeseries_diagnostics.py."""
 import numpy as np
 import pandas as pd
 import pytest
@@ -18,7 +11,6 @@ from src.timeseries_diagnostics import adf_stationarity_test, hurst_exponent, ro
 # ---------------------------------------------------------------------------
 
 def test_adf_detects_stationary_series():
-    # White noise is the textbook stationary series — no unit root.
     rng = np.random.default_rng(0)
     stationary_returns = pd.Series(rng.normal(0, 0.01, 300))
     result = adf_stationarity_test(stationary_returns)
@@ -27,8 +19,6 @@ def test_adf_detects_stationary_series():
 
 
 def test_adf_detects_non_stationary_random_walk():
-    # A cumulative sum of white noise is the textbook random walk — has a
-    # unit root, should NOT reject the null (p >= 0.05 typically).
     rng = np.random.default_rng(1)
     random_walk = pd.Series(np.cumsum(rng.normal(0, 1, 300)))
     result = adf_stationarity_test(random_walk)
@@ -47,13 +37,8 @@ def test_adf_none_with_too_little_history():
 # ---------------------------------------------------------------------------
 
 def test_hurst_detects_trending_series():
-    # A deterministic linear trend + i.i.d. noise is NOT the right test case
-    # here (verified numerically): this variance-of-lagged-differences
-    # estimator measures self-similarity of INCREMENTS (the fBm model), and a
-    # pure linear trend's lagged differences don't grow with lag the way a
-    # persistent stochastic process's do. Build genuine persistence instead:
-    # increments with positive autocorrelation (momentum), the actual
-    # definition of a trending/persistent series this estimator targets.
+    # Positive-autocorrelation increments (momentum), not a deterministic
+    # linear trend — this estimator measures self-similarity of increments.
     rng = np.random.default_rng(2)
     n = 500
     increments = np.zeros(n)
@@ -66,12 +51,11 @@ def test_hurst_detects_trending_series():
 
 
 def test_hurst_detects_mean_reverting_series():
-    # An Ornstein-Uhlenbeck-style mean-reverting process should score H below 0.5.
     rng = np.random.default_rng(3)
     n = 300
     prices = np.zeros(n)
     prices[0] = 100.0
-    theta, mu = 0.3, 100.0  # strong pull back to the mean
+    theta, mu = 0.3, 100.0
     for t in range(1, n):
         prices[t] = prices[t - 1] + theta * (mu - prices[t - 1]) + rng.normal(0, 0.5)
     h = hurst_exponent(pd.Series(prices))
@@ -89,17 +73,8 @@ def test_hurst_nan_for_flat_series():
 
 
 def test_hurst_close_to_half_for_a_pure_random_walk():
-    # REGRESSION test for a magnitude bug (not just sign): a previous version
-    # of this function multiplied the log-log regression slope by 2.0 as if
-    # `tau` were the VARIANCE of lagged differences, when it's actually the
-    # STANDARD DEVIATION — for fBm, std(diff) already scales as lag^H, so the
-    # slope IS H directly and doubling it silently inflated every result
-    # (confirmed: a pure random walk computed as H~0.98 with the bug, ~0.5
-    # without it). The trending/mean-reverting tests above only check the
-    # SIGN relative to 0.5, which a doubled value can still pass — this test
-    # checks the actual magnitude against the one case with a known textbook
-    # answer (H=0.5 exactly, by definition, for Brownian motion). Averaged
-    # over several seeds since any single random walk is noisy.
+    # For fBm, std(diff) scales as lag^H (not lag^(2H)) — H=0.5 for a
+    # textbook random walk. Averaged over several seeds.
     hs = []
     for seed in range(20):
         rng = np.random.default_rng(seed)
@@ -122,8 +97,6 @@ def test_rolling_sharpe_has_expected_nan_prefix_and_length():
 
 
 def test_rolling_sharpe_flags_a_regime_change():
-    # Calm first half, volatile/negative second half -> rolling Sharpe should
-    # be visibly higher in the first half than the second.
     calm = pd.Series(np.random.default_rng(5).normal(0.001, 0.003, 100))
     stressed = pd.Series(np.random.default_rng(6).normal(-0.002, 0.03, 100))
     combined = pd.concat([calm, stressed], ignore_index=True)

@@ -15,9 +15,8 @@ from dotenv import load_dotenv
 
 load_dotenv(override=True)  # override=True: .env values win over any pre-existing shell-level
 # env vars of the same name (even an empty/stale one) — the default (override=False) would
-# silently keep a blank shell variable and ignore .env, which is exactly the kind of "the key
-# is definitely in .env but the app still sees nothing" bug this project hit in practice.
-# No-op in prod (Render/Streamlit Cloud inject env vars directly, no .env file exists there).
+# silently keep a blank shell variable and ignore .env. No-op in prod (Render/Streamlit Cloud
+# inject env vars directly, no .env file exists there).
 
 # --- Default investable universe -------------------------------------------------
 # Individual equities: liquid, well-covered US large caps (matches the brief's examples).
@@ -43,10 +42,10 @@ OPTIONAL_ETF_TICKERS: list[str] = [
 ]
 
 # --- Broader S&P 500 universe, organised by GICS sector -----------------------------
-# A curated 104-name subset (expanded from ~59, still not all 500 — see README
-# for why: covariance estimation degrades badly with hundreds of names and a few years
-# of daily data; real buy-side desks use factor models or sector-constrained universes
-# for exactly this reason, not a raw 500x500 mean-variance optimisation). Each sector
+# A curated 104-name subset (still not all 500 — see README for why: covariance
+# estimation degrades badly with hundreds of names and a few years of daily data;
+# real buy-side desks use factor models or sector-constrained universes for
+# exactly this reason, not a raw 500x500 mean-variance optimisation). Each sector
 # has 7-12 liquid large-caps — enough for a genuinely diversified sub-portfolio, not
 # just one or two tokens. Materials/Real Estate/Utilities sit at 7 each: an honest
 # reflection of how few S&P mega-caps those sectors actually contain, not an oversight.
@@ -144,10 +143,16 @@ MIN_HISTORY_POINTS_FOR_GARCH: int = 100
 # frictionless (textbook) comparison.
 DEFAULT_TRANSACTION_COST_BPS: float = 10.0
 
+# "yearly" maps to 1 period/year — genuinely thin data for any covariance
+# estimate (see app.py's own sidebar warning when this frequency is picked
+# with too short a date range), but it's the brief's own literal wording
+# ("daily, monthly, yearly") so it must be a real, functioning option
+# regardless of how much history a given user happens to select.
 FREQUENCY_TO_PERIODS_PER_YEAR: dict[str, int] = {
     "daily": TRADING_DAYS_PER_YEAR,
     "weekly": 52,
     "monthly": MONTHS_PER_YEAR,
+    "yearly": 1,
 }
 
 # --- Forecasting -------------------------------------------------------------------
@@ -186,9 +191,8 @@ def _load_groq_keys() -> list[str]:
     """
     Collect up to 5 Groq keys from the environment: GROQ_API_KEY (primary) plus
     GROQ_API_KEY_2 .. GROQ_API_KEY_5. Multiple keys exist to spread free-tier
-    rate limits across accounts — same pattern already proven on the Innovation
-    Radar project. Empty/unset slots are skipped, so this also works fine with
-    just one key configured.
+    rate limits across accounts. Empty/unset slots are skipped, so this also
+    works fine with just one key configured.
     """
     keys = []
     primary = os.getenv("GROQ_API_KEY")
@@ -204,9 +208,9 @@ def _load_groq_keys() -> list[str]:
 @dataclass(frozen=True)
 class LLMSettings:
     groq_api_keys: list[str] = field(default_factory=_load_groq_keys)
-    # Groq deprecated llama-3.3-70b-versatile (decommissioned 2026-08-16).
-    # openai/gpt-oss-120b is Groq's official recommended replacement —
-    # if this breaks again later, check https://console.groq.com/docs/deprecations
+    # Groq deprecated llama-3.3-70b-versatile; openai/gpt-oss-120b is Groq's
+    # official recommended replacement — if this breaks again later, check
+    # https://console.groq.com/docs/deprecations
     groq_model: str = field(default_factory=lambda: os.getenv("GROQ_MODEL", "openai/gpt-oss-120b"))
     # OpenRouter: SECOND fallback tier, closing a gap Ollama alone leaves open
     # — Ollama only runs on whatever machine has it installed locally, so
@@ -240,11 +244,10 @@ class LLMSettings:
     finnhub_api_key: str | None = field(default_factory=lambda: os.getenv("FINNHUB_API_KEY") or None)
     fred_api_key: str | None = field(default_factory=lambda: os.getenv("FRED_API_KEY") or None)
     twelvedata_api_key: str | None = field(default_factory=lambda: os.getenv("TWELVEDATA_API_KEY") or None)
-    # Alpha Vantage: a FOURTH market-data tier, tried only after yfinance,
-    # direct Yahoo, AND Twelve Data have all failed — its free tier (5
-    # calls/minute) is the stingiest of the three market-data sources this
-    # app knows about, so it's positioned as the last resort, not an
-    # earlier tier. See market_data.py's fetch_adjusted_close docstring.
+    # Alpha Vantage: the FOURTH and last-resort market-data tier, tried only
+    # after yfinance, direct Yahoo, AND Tiingo/Twelve Data have all failed —
+    # its free tier (25 requests/day) is the stingiest of this app's market-
+    # data sources. See market_data.py's fetch_adjusted_close docstring.
     alpha_vantage_api_key: str | None = field(default_factory=lambda: os.getenv("ALPHA_VANTAGE_API_KEY") or None)
     # Tiingo: THIRD market-data tier (before Twelve Data/Alpha Vantage) — its
     # free tier (500 req/hour) is looser than either, so it's tried first

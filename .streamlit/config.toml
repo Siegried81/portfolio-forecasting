@@ -1,8 +1,5 @@
 [theme]
-# Palette added 2026-09-04, matching the candlestick-pattern background injected
-# in app.py: same navy (#0E4C92) used for the efficient-frontier line, the
-# background watermark, and now every primary widget accent — one consistent
-# identity instead of three unrelated color choices.
+# Navy accent (#0E4C92) shared with the efficient-frontier line and background pattern in app.py
 base = "light"
 primaryColor = "#0E4C92"
 backgroundColor = "#F8F9FB"

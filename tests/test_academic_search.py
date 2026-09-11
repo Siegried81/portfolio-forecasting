@@ -1,12 +1,4 @@
-"""
-Unit tests for src/academic_search.py. Had no test coverage before this pass
-(new module). Priority, same as every other fetcher in this codebase: the
-FAILS-SOFT paths (missing key, network error, malformed response) matter as
-much as the happy path, since this is enrichment (real paper citations for
-methodological chatbot questions) that must never be able to take a chatbot
-answer down. Fully mocked — no real network call, no Semantic Scholar rate
-limit hit.
-"""
+"""Unit tests for src/academic_search.py. Fully mocked — no real network call."""
 import dataclasses
 
 import pytest
@@ -25,10 +17,6 @@ from src.academic_search import (
 
 @pytest.fixture(autouse=True)
 def _reset_state(monkeypatch):
-    """Isolate every test from Streamlit's process-wide @cached fallthrough
-    cache — same pattern as test_news_data.py's own fixture, for the same
-    reason (identical args across tests would otherwise return a stale
-    cached result instead of re-invoking the mocked requests.get)."""
     st.cache_data.clear()
     fake_settings = dataclasses.replace(academic_search.LLM_SETTINGS, semantic_scholar_api_key=None)
     monkeypatch.setattr(academic_search, "LLM_SETTINGS", fake_settings)
@@ -75,7 +63,6 @@ def test_detect_methodology_terms_empty_for_unrelated_question():
 
 
 def test_detect_methodology_terms_matches_whole_words_only():
-    # "arima" must not match inside an unrelated longer word.
     assert detect_methodology_terms("pharmacist recommendation") == []
 
 
@@ -86,14 +73,12 @@ def test_detect_methodology_terms_can_return_multiple_matches():
 
 
 def test_every_methodology_term_has_a_search_query():
-    # Sanity check on the data itself: no term should map to an empty query.
     for term, query in METHODOLOGY_SEARCH_QUERIES.items():
         assert query.strip(), f"{term!r} maps to an empty search query"
 
 
 # ---------------------------------------------------------------------------
-# _search_semantic_scholar (renamed from search_academic_papers when arXiv
-# was added as a second source — same logic, own isolated tests)
+# _search_semantic_scholar
 # ---------------------------------------------------------------------------
 
 def test_search_semantic_scholar_returns_parsed_results(monkeypatch):
@@ -141,10 +126,6 @@ def test_search_semantic_scholar_returns_empty_list_when_no_results(monkeypatch)
 
 
 def test_search_semantic_scholar_works_without_an_api_key(monkeypatch):
-    # UNLIKE every other provider in this app, Semantic Scholar's search
-    # works fully unauthenticated (a lower shared rate limit, not a hard
-    # requirement) — confirm the call succeeds with no key configured and no
-    # auth header is even sent.
     captured = {}
 
     def _fake_get(url, params=None, headers=None, timeout=None):
@@ -172,12 +153,10 @@ def test_search_semantic_scholar_sends_api_key_header_when_configured(monkeypatc
 
 
 # ---------------------------------------------------------------------------
-# search_arxiv_papers — genuinely free, no key, Atom XML instead of JSON
+# search_arxiv_papers
 # ---------------------------------------------------------------------------
 
 def _arxiv_atom_feed(entries: list[dict]) -> str:
-    """Build a minimal, valid arXiv-shaped Atom XML feed for `entries` — each
-    a dict with optional title/authors (list[str])/year/id."""
     entries_xml = ""
     for e in entries:
         authors_xml = "".join(f"<author><name>{a}</name></author>" for a in e.get("authors", []))
@@ -244,8 +223,6 @@ def test_search_arxiv_papers_returns_empty_list_on_malformed_xml(monkeypatch):
 
 
 def test_search_arxiv_papers_never_sends_any_auth_header(monkeypatch):
-    # No API key concept at all for arXiv — confirm no key-lookup crash and
-    # no auth header, structurally different from every other provider.
     captured = {}
 
     def _fake_get(url, params=None, timeout=None):
@@ -254,11 +231,11 @@ def test_search_arxiv_papers_never_sends_any_auth_header(monkeypatch):
 
     monkeypatch.setattr(academic_search.requests, "get", _fake_get)
     search_arxiv_papers("query")
-    assert "headers" not in captured  # no headers kwarg passed at all
+    assert "headers" not in captured
 
 
 # ---------------------------------------------------------------------------
-# search_academic_papers — the public orchestrator (Semantic Scholar + arXiv)
+# search_academic_papers
 # ---------------------------------------------------------------------------
 
 def test_search_academic_papers_combines_both_sources(monkeypatch):
@@ -275,8 +252,6 @@ def test_search_academic_papers_combines_both_sources(monkeypatch):
 
 
 def test_search_academic_papers_only_queries_arxiv_for_remaining_slots(monkeypatch):
-    # Semantic Scholar alone already fills the requested limit -> arXiv
-    # must not even be called.
     calls = {"arxiv": 0}
 
     def _fake_get(url, **kwargs):
@@ -292,8 +267,6 @@ def test_search_academic_papers_only_queries_arxiv_for_remaining_slots(monkeypat
 
 
 def test_search_academic_papers_dedupes_by_normalised_title(monkeypatch):
-    # Same paper (case/whitespace-insensitive match) indexed on both sources
-    # -> must appear only once, not twice.
     def _fake_get(url, **kwargs):
         if url == academic_search.SEMANTIC_SCHOLAR_SEARCH_URL:
             return _FakeResponse({"data": [_paper(title="GARCH Models  ")]})
@@ -302,7 +275,7 @@ def test_search_academic_papers_dedupes_by_normalised_title(monkeypatch):
     monkeypatch.setattr(academic_search.requests, "get", _fake_get)
     results = search_academic_papers("query", limit=5)
     titles = [r["title"] for r in results]
-    assert len(titles) == 2  # "GARCH Models" once (deduped) + "A Different Paper"
+    assert len(titles) == 2
     assert "A Different Paper" in titles
 
 
@@ -347,5 +320,5 @@ def test_format_papers_for_prompt_truncates_authors_with_et_al():
     papers = [{"title": "X", "authors": ["A", "B", "C", "D", "E"], "year": 2020, "url": "", "citation_count": None, "venue": ""}]
     formatted = format_papers_for_prompt(papers)
     assert "et al." in formatted
-    assert "A, B, C et al." in formatted  # first 3 authors only, before "et al."
-    assert ", D" not in formatted  # the 4th/5th author must not leak into the list
+    assert "A, B, C et al." in formatted
+    assert ", D" not in formatted

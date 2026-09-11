@@ -1,15 +1,4 @@
-"""
-Unit tests for src/cache.py.
-
-Priority, same spirit as the rest of this test suite (llm_client's Groq/Ollama
-cascade, market_data's Yahoo circuit breaker): the FALLBACK paths matter more
-than the happy path, because this decorator's whole design promise is "never
-make the app worse than @st.cache_data alone." Redis itself is never actually
-required to run these tests — REDIS_URL is unset in the test environment by
-default, so `cached()` returns `st.cache_data` directly; the Redis-path tests
-below patch `src.cache.REDIS_URL` and `_get_redis_client` instead of needing a
-real server.
-"""
+"""Unit tests for src/cache.py. Redis paths patch REDIS_URL/_get_redis_client instead of needing a real server."""
 from __future__ import annotations
 
 import dataclasses
@@ -22,7 +11,7 @@ from src.cache import _make_cache_key, cached
 
 
 # ---------------------------------------------------------------------------
-# No REDIS_URL configured — the default, every local/free-tier deployment
+# No REDIS_URL configured
 # ---------------------------------------------------------------------------
 
 def test_cached_falls_through_to_st_cache_data_with_no_redis_url(monkeypatch):
@@ -37,14 +26,11 @@ def test_cached_falls_through_to_st_cache_data_with_no_redis_url(monkeypatch):
 
     assert compute(5) == 10
     assert compute(5) == 10
-    # st.cache_data itself is responsible for not re-calling on the second
-    # hit — this just confirms `cached()` actually delegated to it rather
-    # than silently becoming a no-op decorator.
     assert call_count["n"] == 1
 
 
 # ---------------------------------------------------------------------------
-# REDIS_URL configured but unreachable — must degrade to direct calls, never raise
+# REDIS_URL configured but unreachable
 # ---------------------------------------------------------------------------
 
 def test_cached_degrades_to_direct_calls_when_redis_unreachable(monkeypatch):
@@ -57,17 +43,14 @@ def test_cached_degrades_to_direct_calls_when_redis_unreachable(monkeypatch):
     def compute(x: int) -> int:
         return x + 1
 
-    # Must not raise, and must still return the correct result.
     assert compute(4) == 5
 
 
 # ---------------------------------------------------------------------------
-# REDIS_URL configured and reachable (fake client) — real cache-hit behaviour
+# REDIS_URL configured and reachable (fake client)
 # ---------------------------------------------------------------------------
 
 class _FakeRedisClient:
-    """In-memory stand-in for a redis.Redis client — enough surface
-    (get/setex) to exercise cached()'s real Redis path without a live server."""
     def __init__(self):
         self.store: dict[str, str] = {}
 
@@ -90,7 +73,7 @@ def test_cached_hits_redis_on_second_call(monkeypatch):
         return x * 10
 
     assert compute(3) == 30
-    assert compute(3) == 30  # second call should hit the fake Redis store, not re-run compute()
+    assert compute(3) == 30
     assert call_count["n"] == 1
     assert len(fake_client.store) == 1
 
@@ -106,25 +89,21 @@ def test_cached_treats_different_args_as_different_cache_entries(monkeypatch):
 
     compute(1)
     compute(2)
-    assert len(fake_client.store) == 2  # distinct keys, not a collision
+    assert len(fake_client.store) == 2
 
 
 def test_cached_falls_back_to_direct_call_on_non_serialisable_result(monkeypatch):
-    # A result that isn't JSON-serialisable (e.g. a stray object) must not
-    # crash the call — it just won't be cached for next time. This is the
-    # "a broken cache should never take the app down" guarantee from the
-    # module docstring, exercised on the write side rather than the read side.
     fake_client = _FakeRedisClient()
     monkeypatch.setattr(cache_module, "REDIS_URL", "redis://fake:6379/0")
     monkeypatch.setattr(cache_module, "_get_redis_client", lambda: fake_client)
 
     @cached(ttl_seconds=60)
     def compute() -> object:
-        return object()  # not JSON-serialisable
+        return object()
 
-    result = compute()  # must not raise
+    result = compute()
     assert isinstance(result, object)
-    assert len(fake_client.store) == 0  # nothing got cached, and that's fine
+    assert len(fake_client.store) == 0
 
 
 # ---------------------------------------------------------------------------

@@ -1,5 +1,5 @@
 """
-Optional Redis-backed cache — a production next-step prototype for the gap
+Optional Redis-backed cache — a production next-step for the gap
 `@st.cache_data` cannot close: its cache lives inside ONE process, so it's
 lost on every container restart and never shared across multiple app
 instances behind a load balancer. Real production deployments (autoscaled

@@ -14,8 +14,9 @@ grounded Q&A chatbot).
 
 You pick a universe of stocks/ETFs, a date range, and a frequency. I compute historical returns,
 volatility, correlation, and the max-Sharpe efficient-frontier portfolio. Then I hold out the last
-N periods, forecast each asset's price over that window (ARIMA / Exponential Smoothing / naive
-random walk — see "Why not Kats" below), build an optimal portfolio from the *forecasted* returns,
+N periods, forecast each asset's price over that window (six models: naive random walk, ETS, Theta,
+ARIMA, gradient-boosted ML regression, and LSTM — see technical_deep_dive.md for why Kats was
+not used), build an optimal portfolio from the *forecasted* returns,
 and compare its **actual, realized** out-of-sample performance against (a) the historical-based
 portfolio and (b) the hindsight-optimal portfolio built from the *actual* returns of that same
 window. An AI Analyst tab (Groq, falling back through OpenRouter, Cerebras, and SambaNova, then
@@ -27,7 +28,7 @@ filings.
 ## Contents
 
 - [Screenshots](#screenshots)
-- [Full technical write-up](#full-technical-write-up) → [technical_deep_dive.md](technical_deep_dive.md)
+- [Full technical write-up](#full-technical-write-up) → [technical_deep_dive.md](docs/technical_deep_dive.md)
 - [Setup](#setup)
 - [Deployment](#deployment)
 - [License](#license)
@@ -82,7 +83,7 @@ news, far more generous free-tier quota), SEC EDGAR full-text search (free, no k
 primary-source 8-K "material event" filings, not journalism about the company), GDELT (free, no
 key — a worldwide news index reaching well beyond the US/English-language press), Google News
 RSS (free, no key — a fast cross-check search feed), and TED (free, no key — the EU's official
-public-procurement notice database; NOT "TED Talks", see `technical_deep_dive.md`). Each headline
+public-procurement notice database; NOT "TED Talks", see `docs/technical_deep_dive.md`). Each headline
 in the UI's "Sources" expander is tagged with which provider it came from; the LLM prompt
 explicitly treats SEC filings and TED notices as more authoritative primary sources than media
 coverage of the same event, and notes when multiple sources corroborate the same story. Works
@@ -126,7 +127,7 @@ a genuinely new, finance-relevant data point (a real macro rate) instead of a re
 pytest tests/ -v
 ```
 
-320 tests across 18 files, all passing — `mypy --strict` is also clean on every file in `src/`.
+367 tests across 19 files, all passing — `mypy --strict` is also clean on every file in `src/`.
 
 ### Check your environment
 

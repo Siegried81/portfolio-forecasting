@@ -34,6 +34,12 @@ SYSTEM_PERSONA = (
     "reader. Be precise, quantitative, and honest about uncertainty. Never invent "
     "numbers that are not given to you in the context — if something isn't in the "
     "context, say so explicitly rather than guessing.\n\n"
+    "FORMATTING: never use LaTeX or markdown math syntax (\\;, \\text{}, \\[...\\], "
+    "$...$) — this app renders plain text, not math markup, so LaTeX shows up as "
+    "raw, broken-looking symbols. Write any formula in plain words and standard "
+    "keyboard symbols instead, e.g. 'Sortino ratio = (mean excess return) / "
+    "(downside deviation), annualised by multiplying by the square root of the "
+    "number of periods per year'.\n\n"
     "CRITICAL: sanity-check annualised figures before reporting them at face value. "
     "An annualised return is calculated by compounding a short window's actual return "
     "out to a full year — over a short window (a handful of weeks or months), this "
@@ -64,8 +70,8 @@ def _wrap_context(tag: str, content: str) -> str:
     Wrap a block of injected DATA (computed metrics, retrieved news, retrieved
     papers) in an XML tag, so the model can clearly tell it apart from the
     surrounding INSTRUCTIONS (plain prose in the rest of the system prompt).
-    Recommended practice for a prompt this long, and especially worth doing
-    now that `chat()` can route to five different providers of varying
+    Recommended practice for a prompt this long, and especially useful now
+    that `chat()` can route to five different providers of varying
     instruction-following discipline (Groq, OpenRouter, Cerebras, SambaNova,
     Ollama) — not just Claude, which tends to track unmarked prose structure
     more reliably than smaller/less-tuned models do. Every call site below
@@ -103,7 +109,7 @@ def build_results_context(
     source of truth, so the two features can never disagree with each other."""
     lines = ["PORTFOLIO WEIGHTS (optimal, max-Sharpe):"]
     for ticker, w in weights.items():
-        # abs(), not w > 0.001: a plain positive-only filter silently drops
+        # abs(), not w > 0.001: a plain positive-only filter would silently drop
         # SHORT positions (negative weights) when short selling is enabled,
         # which would make the LLM describe a fully-invested short as an
         # unexplained gap in the weights instead of an actual short position.
@@ -212,13 +218,12 @@ def generate_news_digest(
     and ask the LLM for a short digest that cross-references them rather
     than relying on a single provider's coverage.
 
-    PARALLELIZED across tickers with a thread pool: this used to
-    be 3 sequential HTTP calls PER ticker (up to ~15s wall-clock for a 5-ticker
-    universe even with fast providers). This is pure I/O wait, not CPU work,
-    so a thread pool gives a near-linear speedup with no GIL concern — a
-    5-ticker digest now takes roughly as long as the single slowest ticker's
-    calls, not the sum of all of them. `max_workers` capped at 8 for the
-    same reason as forecast_all_assets: don't oversubscribe a small container.
+    PARALLELIZED across tickers with a thread pool: this is pure I/O wait,
+    not CPU work, so a thread pool gives a near-linear speedup with no GIL
+    concern — a 5-ticker digest takes roughly as long as the single slowest
+    ticker's calls, not the sum of all of them. `max_workers` capped at 8 for
+    the same reason as forecast_all_assets: don't oversubscribe a small
+    container.
 
     Returns (digest_text, backend_used, raw_articles, sentiment_by_ticker).
     raw_articles are kept so the UI can render clickable source links (the LLM
@@ -386,7 +391,7 @@ def answer_portfolio_question(
             "title, or year) that isn't in that tag.\n\n"
             + _wrap_context("academic_references", academic_block)
         )
-
+    system_content = truncate_to_token_budget(system_content)
     messages = [
         {"role": "system", "content": system_content},
         *chat_history,

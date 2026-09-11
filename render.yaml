@@ -1,76 +1,43 @@
-# Render.com deployment config (Infrastructure as Code).
-# Push this repo to GitHub, then on Render: New -> Blueprint -> point to this repo.
-# Render reads this file automatically and provisions the service below.
+# Render.com deployment config. Push to GitHub, then on Render: New -> Blueprint -> point to this repo.
 services:
   - type: web
     name: portfolio-forecasting
-    runtime: docker         # reuses the Dockerfile above -> identical behaviour locally and in prod
-    # This field must be `runtime`, not `env` — Render deprecated `env` in
-    # favour of `runtime` for the Blueprint spec (same accepted values: docker,
-    # node, python, image, static, ...). `env` still silently worked for a
-    # while as a back-compat alias, but is flagged by Render's own schema/CLI
-    # validator (`render blueprints validate`) and by editor tooling that
-    # points at https://render.com/schema/render.yaml.json — confirmed live
-    # via VS Code's YAML schema check ("Missing property 'runtime'").
+    runtime: docker
     plan: free
     healthCheckPath: /_stcore/health
     envVars:
       - key: GROQ_API_KEY
-        sync: false          # set manually in the Render dashboard, never committed
+        sync: false
       - key: GROQ_API_KEY_2
-        sync: false          # optional — additional Groq keys for rate-limit rotation
+        sync: false
       - key: GROQ_API_KEY_3
         sync: false
       - key: GROQ_API_KEY_4
         sync: false
       - key: GROQ_API_KEY_5
         sync: false
-      # GROQ_MODEL intentionally NOT set here — config.py's own default
-      # (openai/gpt-oss-120b) applies unless you override it. Do not hardcode a
-      # specific model name in this file: Groq deprecates models periodically
-      # (llama-3.3-70b-versatile was decommissioned 2026-08-16) and a stale
-      # override here would silently break the AI Analyst tab even after
-      # config.py's default was fixed. Only set this if you deliberately want a
-      # different model than the code default.
+      # GROQ_MODEL intentionally not set — config.py's default applies unless overridden.
       - key: OPENROUTER_API_KEY
-        sync: false          # optional — hosted LLM fallback tier, works in this
-        # deployed environment (unlike Ollama, which needs a local daemon this
-        # container doesn't have). Groq -> OpenRouter -> Cerebras -> SambaNova ->
-        # Ollama cascade; without any of the three hosted keys, a Groq outage in
-        # prod falls straight through to Ollama, which won't be reachable either.
-      # OPENROUTER_MODEL intentionally NOT set here, same reasoning as GROQ_MODEL above
-      # — config.py's own default (openai/gpt-oss-120b:free) applies unless overridden.
+        sync: false
       - key: CEREBRAS_API_KEY
-        sync: false          # optional — same reasoning as OPENROUTER_API_KEY above;
-        # a dedicated fast-inference provider, independent account/infrastructure
-        # from Groq and OpenRouter, tried after them if both fail.
-      # CEREBRAS_MODEL intentionally NOT set here, same reasoning as GROQ_MODEL above.
+        sync: false
       - key: SAMBANOVA_API_KEY
-        sync: false          # optional — same reasoning again; tried last among the
-        # hosted fallbacks, before finally falling through to Ollama (local-dev only).
-      # SAMBANOVA_MODEL intentionally NOT set here, same reasoning as GROQ_MODEL above.
+        sync: false
       - key: NEWSAPI_KEY
         sync: false
       - key: FINNHUB_API_KEY
-        sync: false          # optional — cross-referenced with NewsAPI + SEC EDGAR
+        sync: false
       - key: TWELVEDATA_API_KEY
-        sync: false          # optional — fallback market data source if Yahoo is unreachable
+        sync: false
       - key: TIINGO_API_KEY
-        sync: false          # optional — tried FIRST among the three market-data fallbacks once
-        # Yahoo fails; free tier is 500 req/hour, the most generous of the three.
+        sync: false
       - key: ALPHA_VANTAGE_API_KEY
-        sync: false          # optional — fourth, last-resort market-data tier, only tried if
-        # Twelve Data ALSO fails; free tier is 25 requests/DAY, the stingiest of the three,
-        # which is why it sits last in the cascade rather than earlier.
+        sync: false
       - key: SEMANTIC_SCHOLAR_API_KEY
-        sync: false          # optional — even without it, academic-literature grounding still
-        # works (Semantic Scholar's search endpoint allows unauthenticated calls at a lower
-        # shared rate limit); a key just raises that ceiling.
+        sync: false
       - key: HUGGINGFACE_API_KEY
-        sync: false          # optional — middle tier of the sentiment cascade (FinBERT, via HF's
-        # hosted Inference API). UNLIKE Semantic Scholar above, this key IS required for
-        # FinBERT to run at all; without it that tier is skipped and VADER handles it.
+        sync: false
       - key: FRED_API_KEY
-        sync: false          # optional — live risk-free rate
+        sync: false
       - key: OLLAMA_HOST
-        value: ""            # leave empty in prod - Ollama fallback only applies to local dev
+        value: ""  # leave empty in prod — Ollama fallback is local-dev only
