@@ -25,4 +25,5 @@ venv/
 
 .agents/
 .claude/
-.notes/
+notes/
+/notes/
