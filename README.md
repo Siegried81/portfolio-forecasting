@@ -7,7 +7,7 @@ mean-variance optimization, plus an AI analyst layer I added on top (LLM comment
 grounded Q&A chatbot).
 
 ## Live demo
-- Streamlit Community Cloud: [portfolio-forecasting-sieg.streamlit.app](https://portfolio-forecasting-sieg.streamlit.app/)
+- Streamlit Community Cloud: [portfolio-forecasting-siegried81.streamlit.app](https://portfolio-forecasting-siegried81.streamlit.app/)
 - Render: [portfolio-forecasting.onrender.com](https://portfolio-forecasting.onrender.com)
 
 ## What it does, in one paragraph

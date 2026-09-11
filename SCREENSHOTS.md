@@ -18,14 +18,14 @@ how the two models' confidence bands differ.
 
 **Sidebar — key controls & forecast model selector**
 <table><tr>
-<td><img src="images/sidebar-controls.png" width="440" alt="Risk-free rate, max weight per asset, short selling, transaction cost, forecast horizon, walk-forward windows, covariance estimator"></td>
-<td><img src="images/forecast_model_selector.png" width="440" alt="The six forecast models: Naive, ETS, Theta, ARIMA, ML regression, LSTM"></td>
+<td><img src="images/sidebar-controls.png" width="400" alt="Risk-free rate, max weight per asset, short selling, transaction cost, forecast horizon, walk-forward windows, covariance estimator"></td>
+<td><img src="images/forecast_model_selector.png" width="400" alt="The six forecast models: Naive, ETS, Theta, ARIMA, ML regression, LSTM"></td>
 </tr></table>
 
 **Efficient Frontier — with optimal weights**
 <table><tr>
-<td><img src="images/efficient_frontier.png" width="600" alt="Mean-variance efficient frontier with diversification ratio and HHI"></td>
-<td><img src="images/weights.png" width="280" alt="Optimal portfolio weights table, long and short positions"></td>
+<td><img src="images/efficient_frontier.png" width="700" alt="Mean-variance efficient frontier with diversification ratio and HHI"></td>
+<td><img src="images/weights.png" width="200" alt="Optimal portfolio weights table, long and short positions"></td>
 </tr></table>
 
 **Efficient Frontier — Fama-French factor exposure**
@@ -56,11 +56,17 @@ comparison of how each model's forecast behaves on identical data.
 **AI Analyst — commentary & news digest**
 <img src="images/AI_portfolio_analyst.png" width="900" alt="LLM-generated portfolio commentary and cross-referenced, per-ticker news digest">
 
+<br>
+
 **AI Analyst — sentiment by ticker**
-<img src="images/sentiment_sources.png" width="600" alt="News sentiment by ticker (FinBERT financial-domain model), tagged by source">
+<img src="images/sentiment_sources.png" width="550" alt="News sentiment by ticker (FinBERT financial-domain model), tagged by source">
+
+<br>
 
 **AI Analyst — sources**
-<img src="images/sources.png" width="800" alt="Every headline/filing behind the digest, tagged by provider (NewsAPI, Finnhub, SEC EDGAR, GDELT, Google News, TED), linking out to the original">
+<img src="images/sources.png" width="900" alt="Every headline/filing behind the digest, tagged by provider (NewsAPI, Finnhub, SEC EDGAR, GDELT, Google News, TED), linking out to the original">
+
+<br>
 
 **Chatbot — grounded Q&A**
 <img src="images/chatbot_1.png" width="900" alt="Chatbot explaining why MSFT sentiment is bearish, combining the negative model weight, the one filed 8-K, and the current macro backdrop">
@@ -68,6 +74,8 @@ comparison of how each model's forecast behaves on identical data.
 <img src="images/chatbot_3.png" width="900" alt="Chatbot explaining why NVDA and AVGO outperformed, grounded in the retrieved news digest">
 <img src="images/chatbot_4.png" width="900" alt="Chatbot explaining the Sortino ratio formula in plain text (no LaTeX) and computing it for the historical/forecast/realized portfolios from the app's own results">
 <img src="images/chatbot_5.png" width="900" alt="Chatbot answering a risk-profile and time-horizon question, flagging its own annualised-return caveat on a short window">
+
+<br>
 
 **Chatbot — academic literature search**
 <img src="images/search_academic_literature.png" width="900" alt="Manual academic-literature search box under the Chatbot tab, showing recognised-term query expansion and real Semantic Scholar/arXiv results for 'walk-forward validation'">
