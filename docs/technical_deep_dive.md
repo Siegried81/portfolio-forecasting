@@ -7,8 +7,8 @@ for the business-first summary, results, and screenshots.
 ## Understanding the KPIs — formulas & how to read them
 
 Computed in `src/metrics.py` (unit-tested in `tests/test_metrics.py`) unless noted otherwise.
-`r` = period return series (daily/weekly/monthly per the sidebar), `rf` = risk-free rate,
-`n` = periods per year (252/52/12).
+`r` = period return series (daily/weekly/monthly/yearly per the sidebar), `rf` = risk-free rate,
+`n` = periods per year (252/52/12/1).
 
 ### 1. Return & risk — the building blocks
 
@@ -109,65 +109,77 @@ lookback/methodology differences), dividend yield, 52-week range. Finnhub tried 
 as fallback (see the source-chain note further below) — the table's **Source** column shows which
 one actually answered for each ticker.
 
-
-
 ## Repository structure
 
 ```
 portfolio-forecasting/
-├── app.py                    # Streamlit UI — orchestration only, no finance/LLM logic
+├── app.py                       # Streamlit UI — orchestration only, no finance/LLM logic
 ├── src/
 │   ├── __init__.py
 │   ├── academic_search.py       # Semantic Scholar + arXiv paper search — grounds methodological chatbot answers in real citations
-│   ├── ai_features.py          # commentary / news digest (parallel per ticker) / chatbot — prompt logic lives here
-│   ├── backtesting.py          # walk-forward (multi-window) validation of the 3-portfolio comparison
+│   ├── ai_features.py           # commentary / news digest (parallel per ticker) / chatbot — prompt logic lives here
+│   ├── backtesting.py           # walk-forward (multi-window) validation of the 3-portfolio comparison
 │   ├── cache.py                 # optional Redis-backed cache (+ public get_redis_client() for rag.py) — falls through to @st.cache_data with no REDIS_URL
-│   ├── config.py               # single source of truth: defaults, env vars, constants
-│   ├── factor_models.py        # PCA statistical factor model (covariance for wide universes)
-│   ├── forecasting.py          # naive / ETS / Theta / ARIMA / LSTM price forecasting, parallel across tickers
-│   ├── llm_client.py           # Groq (multi-key rotation) -> [OpenRouter, Cerebras, SambaNova] -> Ollama, one call site for all
-│   ├── macro_data.py           # FRED: live 3-month T-bill rate, pre-fills the risk-free-rate slider
-│   ├── market_data.py          # yfinance fetch + cache + frequency resampling + fallback chain
-│   ├── metrics.py              # pure finance math: returns, Sharpe, Sortino, VaR, CVaR, drawdown, beta
-│   ├── news_data.py            # NewsAPI/Finnhub/SEC EDGAR headlines per ticker (fails soft if no key)
-│   ├── optimization.py         # PyPortfolioOpt wrapper: mean-variance, efficient frontier
-│   ├── rag.py                  # TF-IDF retrieval over the news/filings corpus + optional Redis persistence
+│   ├── config.py                # single source of truth: defaults, env vars, constants
+│   ├── factor_data.py           # Fama-French 3/5-factor data (Ken French Data Library) + exposure regression
+│   ├── factor_models.py         # PCA statistical factor model (covariance for wide universes)
+│   ├── forecasting.py           # naive / ETS / Theta / ARIMA / ML regression / LSTM price forecasting, parallel across tickers
+│   ├── http_utils.py            # shared "GET, expect JSON, fail soft" helper for the simplest fetchers
+│   ├── llm_client.py            # Groq (multi-key rotation) -> [OpenRouter, Cerebras, SambaNova] -> Ollama, one call site for all
+│   ├── macro_data.py            # FRED: live 3-month T-bill rate, pre-fills the risk-free-rate slider; full macro/risk panel
+│   ├── market_data.py           # yfinance + fallback chain (Yahoo direct -> Tiingo -> Twelve Data -> Alpha Vantage) + fundamentals
+│   ├── metrics.py               # pure finance math: returns, Sharpe, Sortino, VaR, CVaR, drawdown, beta
+│   ├── news_data.py             # 6-source news/filings + 3-tier sentiment cascade (FinBERT -> Finnhub -> VADER)
+│   ├── optimization.py          # PyPortfolioOpt wrapper: mean-variance, efficient frontier
+│   ├── rag.py                   # TF-IDF retrieval over the news/filings corpus + optional Redis persistence
 │   ├── timeseries_diagnostics.py  # ADF stationarity, Hurst exponent, rolling Sharpe
 │   └── volatility_forecasting.py  # GARCH(1,1) forecasted volatility + historical correlation -> forecasted cov
 ├── tests/
 │   ├── __init__.py
-│   ├── test_academic_search.py  # Semantic Scholar + arXiv search: term detection, source merge/dedup, fails-soft, works without any key
-│   ├── test_ai_features.py     # build_results_context formatting (shared by commentary + chatbot); academic-citation wiring
-│   ├── test_backtesting.py     # expanding-window edge cases, end-to-end walk-forward smoke test, portfolio-order consistency
-│   ├── test_cache.py           # Redis cache: no-REDIS_URL fallthrough, unreachable-Redis degradation
-│   ├── test_factor_models.py   # PCA cov: symmetric/PSD, known factor-structure recovery, clamping
-│   ├── test_forecasting.py     # short-history and non-convergence fallback paths, no statsmodels index FutureWarning, LSTM widening-band regression
-│   ├── test_llm_client.py      # Groq->[hosted fallback list]->Ollama cascade, provider ordering, token-budget truncation
-│   ├── test_macro_data.py      # FRED divide_by pitfall (Sahm Rule), YoY calculation, GDP/PMI-proxy fetch
-│   ├── test_market_data.py     # fully mocked: Twelve Data partial-batch parsing, Yahoo circuit breaker, yfinance cache redirect
-│   ├── test_metrics.py         # unit tests for the finance formulas (hand-checkable synthetic data)
-│   ├── test_news_data.py       # SEC EDGAR filing-URL construction, CIK filtering, accession dedup
-│   ├── test_news_sentiment.py  # FinBERT->Finnhub->VADER sentiment cascade + circuit breaker on 401/403 (not 429/5xx)
-│   ├── test_optimization.py    # negative bounds, infeasible cap, degenerate mu<rf fallback
-│   ├── test_rag.py             # TF-IDF retrieval + Redis persistence: round-trip, dedup, fails-soft on a broken Redis
-│   ├── test_timeseries_diagnostics.py  # ADF stationary vs. random walk, Hurst trending vs. mean-reverting
-│   └── test_volatility_forecasting.py  # GARCH fallback path, symmetric/PSD, correlation preserved from history
+│   ├── test_academic_search.py
+│   ├── test_ai_features.py
+│   ├── test_backtesting.py
+│   ├── test_cache.py
+│   ├── test_config.py
+│   ├── test_factor_data.py
+│   ├── test_factor_models.py
+│   ├── test_forecasting.py
+│   ├── test_http_utils.py
+│   ├── test_llm_client.py
+│   ├── test_macro_data.py
+│   ├── test_market_data.py
+│   ├── test_metrics.py
+│   ├── test_news_data.py
+│   ├── test_news_sentiment.py
+│   ├── test_optimization.py
+│   ├── test_rag.py
+│   ├── test_timeseries_diagnostics.py
+│   └── test_volatility_forecasting.py
 ├── scripts/
-│   └── benchmark_walk_forward.py  # capacity-planning benchmark for run_walk_forward (not gated in CI, run manually)
-├── images/                    # screenshots referenced in this README
-├── .github/workflows/ci.yml   # pytest + mypy --strict (blocking) + benchmark smoke test (non-blocking) on every push/PR
-├── .streamlit/config.toml     # theme/UI config — tracked (unlike secrets.toml, see .gitignore)
+│   ├── benchmark_walk_forward.py  # capacity-planning benchmark for run_walk_forward (not gated in CI, run manually)
+│   └── check_env.py               # one-command report of which optional API keys are configured
+├── evals/
+│   └── chatbot_groundedness.py    # LLM-as-judge groundedness eval — not gated in CI, run manually
+├── docs/
+│   └── technical_deep_dive.md   # this file
+├── images/                      # screenshots referenced in SCREENSHOTS.md
+├── .github/
+│   └── workflows/
+│       └── ci.yml                # pytest + mypy --strict (blocking) + benchmark smoke test (non-blocking) on every push/PR
+├── .streamlit/
+│   └── config.toml               # theme/UI config — tracked (unlike secrets.toml, see .gitignore)
 ├── .dockerignore
-├── .env                       # your local keys — NEVER committed
+├── .env                          # your local keys — NEVER committed
 ├── .gitignore
-├── BUGFIXES.md                # bug-fix log, kept separate from this README
-├── RUNBOOK.md                 # operational playbook for external-dependency failures
-├── build-docker.sh / deploy.sh / deploy.bat  # local build/run helpers (WSL, Linux/macOS, Windows)
-├── docker-compose.yml         # local Docker run — optional `redis` service via `--profile with-redis`
-├── Dockerfile                 # containerised run — also the base for Render's `runtime: docker`
-├── env.example                # copy to .env and fill in your keys
-├── render.yaml                # Render Blueprint (Infrastructure as Code)
-└── requirements.txt
+├── build-docker.sh / deploy.sh    # local build/run helpers (WSL, Linux/macOS)
+├── docker-compose.yml             # local Docker run — optional `redis` service via `--profile with-redis`
+├── Dockerfile                     # containerised run — also the base for Render's `runtime: docker`
+├── env.example                    # copy to .env and fill in your keys
+├── LICENSE
+├── README.md
+├── render.yaml                    # Render Blueprint (Infrastructure as Code)
+├── requirements.txt
+└── SCREENSHOTS.md
 ```
 
 **Why this layout:** `src/metrics.py`, `src/forecasting.py`, and `src/optimization.py` have zero
@@ -246,12 +258,13 @@ loosely and this project tries not to:
 All three weight vectors are then applied to the **same actual realized returns** of the held-out
 window, so the comparison isolates the effect of the allocation choice alone.
 
-**Reading the period count.** The sidebar's forecast horizon (e.g. 90) is a count of *prices*
-held out; `compute_returns` drops the first row (`pct_change` is undefined for it), so the
-metrics table's `n_periods` — and every LLM commentary referencing "the N-period window" — is
-actually `horizon - 1`. The section header still says "last {horizon} periods" for readability
-(it's the sidebar control's own value), so don't be surprised the two numbers differ by one; it's
-this off-by-one, not a computation bug — same convention every KPI in this app already follows.
+**Reading the period count.** The held-out test window includes one extra price — the last
+training price — purely as the anchor `pct_change()` needs to compute a return for the first
+held-out day. The metrics table's `n_periods` and the section header's "last {horizon} periods"
+now agree exactly: both report `horizon` returns. (An earlier version of this app had an
+off-by-one here, where `n_periods` reported `horizon - 1` while the header said `horizon` — fixed
+by including that anchor price in the test window; see `render_forecast_compare_tab` and
+`run_walk_forward` in `backtesting.py`, which uses the same fix.)
 
 ## Walk-forward validation (why one comparison isn't enough)
 
@@ -378,9 +391,17 @@ conserve API quota): market cap, trailing P/E, beta, dividend yield, price-to-bo
 with pro or ultra or venture or enterprise plans"}`, confirmed directly via `curl`. Rather than
 ship a feature that only works for one hardcoded ticker, fundamentals now try **Finnhub first**
 (`/stock/profile2` + `/stock/metric`) — confirmed free-tier for arbitrary tickers, and you likely
-already have `FINNHUB_API_KEY` configured for the news digest — falling back to Twelve Data only
-if Finnhub isn't configured or returns nothing (which still covers `AAPL` via the demo-symbol
-path). Two Finnhub-specific parsing quirks worth knowing if this needs debugging later: market cap
+already have `FINNHUB_API_KEY` configured for the news digest. Twelve Data is then used in two
+DIFFERENT ways: as the primary source outright if Finnhub isn't configured or returns nothing at
+all, and — the newer fix — as a **per-field** gap-filler when Finnhub DID return a result but left
+individual fields `None` (`forward_pe` especially, often absent on Finnhub's free tier). The old
+behaviour was all-or-nothing: Twelve Data was only ever tried when Finnhub returned NOTHING,
+leaving a real per-field gap unfilled even on `AAPL`, where Twelve Data's demo-symbol-restricted
+free tier could actually have covered it. A module-level circuit breaker stops the per-field path
+from repeating a confirmed 403 for every subsequent ticker in the same session, and the UI's
+Source column reflects blended provenance (`"Finnhub + Twelve Data"`) whenever a field was
+actually patched in, so the displayed source never silently mismatches the data next to it. Two
+Finnhub-specific parsing quirks worth knowing if this needs debugging later: market cap
 is returned in **millions**, not raw units (multiplied by 1e6 in code to match the display format),
 and dividend yield is a **percentage number** (e.g. `0.72` for 0.72%), not a decimal fraction
 (divided by 100 in code to match). Finnhub's field names were confirmed via public documentation
@@ -396,7 +417,7 @@ more accurately than a general-purpose aggregator or lexicon. If it's unavailabl
 `HUGGINGFACE_API_KEY` configured, or every request failed), Finnhub's own `/news-sentiment`
 endpoint (an aggregation over a much wider article set than the ~5 headlines this app fetches per
 ticker) is tried next — or skipped outright once the module's own circuit breaker confirms it's
-plan-restricted on this account (see `BUGFIXES.md`). If neither source has anything, sentiment is
+plan-restricted on this account (confirmed via live testing — see `test_news_sentiment.py`'s circuit-breaker tests). If neither source has anything, sentiment is
 computed **locally** with VADER (a free, offline, lexicon-based scorer — no API key, no model
 download, tuned for short informal text) on the headlines already fetched for the digest — the
 final tier that can never fail. If nothing at all is available, the UI shows an explicit
@@ -544,9 +565,9 @@ Things I'm aware of and chose not to fix within this project's scope, rather tha
   forecast-driven allocation. The Forecast-based portfolio, in both the single-window comparison
   and the walk-forward validation, can instead use `volatility_forecasting.garch_forecast_cov` —
   GARCH(1,1)-forecasted volatility per asset, genuinely reacting to recent conditions rather than
-  averaging over the whole history — via the sidebar's "Forecast-based covariance" toggle
-  (wired into the UI; previously only reachable by calling `run_walk_forward(...,
-  forecast_cov_method="garch")` directly from a script). Correlation between assets still comes
+  averaging over the whole history — via `run_walk_forward(..., forecast_cov_method="garch")` — implemented and unit-tested (`test_run_walk_forward_garch_forecast_cov_method_changes_forecast_based_weights` in
+  `test_backtesting.py`), but **not yet exposed as a sidebar control** in `app.py` — currently only
+  reachable by calling the function directly (a script, a notebook, or a future UI addition).. Correlation between assets still comes
   from history (Ledoit-Wolf shrinkage) even in GARCH mode: a true correlation forecast needs a
   DCC-GARCH (Dynamic Conditional Correlation) model, and no well-maintained Python package
   implements that robustly today — see `volatility_forecasting.py`'s docstring for the full
@@ -558,7 +579,7 @@ Things I'm aware of and chose not to fix within this project's scope, rather tha
   with the unrelated company. `_fetch_cik_for_ticker` resolves the real CIK
   via SEC's own `company_tickers.json` and results are filtered to it (falling back to the
   unfiltered search only if that lookup itself fails), plus deduplicated by accession number — see
-  `BUGFIXES.md` and the tests in `test_news_data.py`.
+  the tests in `test_news_data.py`.
 - **The Yahoo circuit breaker is process-wide, not per-session — deliberately, not an oversight.**
   On a multi-user deployment (Streamlit Community Cloud, Render), if Yahoo fails for one user it's
   skipped for everyone for the next 3 minutes. Kept as-is on purpose: making it
@@ -575,7 +596,7 @@ Things I'm aware of and chose not to fix within this project's scope, rather tha
 
 The longer-term roadmap I'd tackle with a real budget and a production SLA to hit, rather than a
 bootcamp deadline. The two nearest-term, concrete items from this list — SEC EDGAR CIK matching
-and CI hardening — are done (see `BUGFIXES.md` and `.github/workflows/ci.yml`); load testing now
+and CI hardening — are done (see `.github/workflows/ci.yml`); load testing now
 has a starting script too (see "Capacity benchmarking" under Setup). What's left:
 
 1. **Cloud deployment (Azure)** — move off Render's free tier onto Azure Container Apps or AKS:
@@ -587,7 +608,7 @@ has a starting script too (see "Capacity benchmarking" under Setup). What's left
 
 2. **Paid market data instead of the free-tier fallback chain** — a proper vendor (Polygon.io,
    IEX Cloud, or a Bloomberg/Refinitiv feed at real enterprise scale) replaces the
-   Yahoo→direct-API→Twelve Data cascade entirely: no rate limits, no "possibly delisted" parsing
+  Yahoo→direct-API→Tiingo→Twelve Data→Alpha Vantage fallback chain entirely: no rate limits, no "possibly delisted" parsing
    errors, survivorship-bias-free historical data (the free sources silently drop delisted/acquired
    tickers, which quietly biases any backtest toward survivors), and proper corporate-action
    adjustments (splits, spin-offs) instead of relying on adjusted-close alone.

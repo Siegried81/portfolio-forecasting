@@ -1,18 +1,4 @@
-"""
-Unit tests for src/rag.py (TF-IDF retrieval over the news/filings corpus).
-
-Priority: this module had NO test coverage before this pass, despite being
-the actual retrieval step behind the chatbot's "answers about news" path in
-ai_features.answer_portfolio_question. Focus on the contract callers rely on
-(retrieve() never raises, ranks by relevance, drops zero-similarity noise)
-rather than TF-IDF internals, which sklearn already tests upstream.
-
-Also covers the 2026-09-08 Redis persistence addition (save_chunks/
-load_chunks) — same spirit as test_cache.py: the FALLBACK/no-op paths matter
-more than the happy path, since the whole design promise is "never make this
-worse than today's session-only behaviour." A fake in-memory Redis client
-stands in for a real server, same pattern as test_cache.py's _FakeRedisClient.
-"""
+"""Unit tests for src/rag.py (TF-IDF retrieval) and its Redis persistence."""
 import pytest
 
 import src.rag as rag
@@ -44,7 +30,7 @@ def test_build_chunks_empty_input_returns_empty_list():
 
 
 # ---------------------------------------------------------------------------
-# retrieve — the actual TF-IDF ranking
+# retrieve
 # ---------------------------------------------------------------------------
 
 def _chunk(text: str, ticker: str = "AAPL") -> Chunk:
@@ -63,7 +49,6 @@ def test_retrieve_ranks_the_most_relevant_chunk_first():
 
 
 def test_retrieve_filters_out_zero_similarity_chunks():
-    # Query shares no vocabulary at all with either chunk -> nothing should be relevant.
     chunks = [_chunk("Quarterly earnings beat expectations"), _chunk("New product launch event")]
     results = retrieve("xyzxyz nonword qqqqq", chunks, top_k=5)
     assert results == []
@@ -85,8 +70,6 @@ def test_retrieve_respects_top_k():
 
 
 def test_retrieve_never_raises_on_stopword_only_corpus():
-    # Every chunk + the query reduce to nothing but stopwords after cleaning —
-    # TfidfVectorizer raises ValueError internally; retrieve() must swallow it.
     chunks = [_chunk("the a an of")]
     assert retrieve("the a an", chunks, top_k=4) == []
 
@@ -107,13 +90,10 @@ def test_format_retrieved_chunks_tags_provider_and_source():
 
 
 # ---------------------------------------------------------------------------
-# save_chunks / load_chunks — Redis persistence (opt-in, fails soft)
+# save_chunks / load_chunks
 # ---------------------------------------------------------------------------
 
 class _FakeRedisClient:
-    """In-memory stand-in for a redis.Redis client — same pattern as
-    test_cache.py's own _FakeRedisClient, just the get/setex surface these
-    two functions actually use."""
     def __init__(self):
         self.store: dict[str, str] = {}
 
@@ -136,37 +116,30 @@ def test_save_and_load_chunks_round_trips_through_a_configured_redis(monkeypatch
 
 
 def test_load_chunks_is_a_noop_returning_empty_list_without_redis(monkeypatch):
-    # No REDIS_URL configured — the default, every local/free-tier deployment.
     monkeypatch.setattr(rag, "get_redis_client", lambda: None)
     assert load_chunks(["AAPL"]) == []
 
 
 def test_save_chunks_is_a_noop_without_redis(monkeypatch):
-    # Must not raise, and must not attempt to touch a client that doesn't exist.
     monkeypatch.setattr(rag, "get_redis_client", lambda: None)
-    save_chunks([_chunk("Whatever")], ["AAPL"])  # no assertion needed — just must not raise
+    save_chunks([_chunk("Whatever")], ["AAPL"])
 
 
 def test_save_chunks_does_not_persist_an_empty_corpus(monkeypatch):
-    # An empty fetch (e.g. every news source temporarily down) overwriting a
-    # REAL previously-persisted corpus would be a regression, not a cache
-    # update — save_chunks([], ...) must be a no-op, not a corpus-clearing write.
     fake_client = _FakeRedisClient()
     monkeypatch.setattr(rag, "get_redis_client", lambda: fake_client)
     save_chunks([_chunk("Real headline")], ["AAPL"])
-    save_chunks([], ["AAPL"])  # must NOT overwrite the real entry above
+    save_chunks([], ["AAPL"])
     assert load_chunks(["AAPL"]) == [_chunk("Real headline")]
 
 
 def test_load_chunks_returns_empty_list_when_nothing_persisted_yet(monkeypatch):
     fake_client = _FakeRedisClient()
     monkeypatch.setattr(rag, "get_redis_client", lambda: fake_client)
-    assert load_chunks(["MSFT"]) == []  # nothing ever saved under this ticker set
+    assert load_chunks(["MSFT"]) == []
 
 
 def test_persistence_key_ignores_ticker_order_and_case(monkeypatch):
-    # A user re-selecting the same universe in a different order (or a
-    # different case) should still hit the same persisted corpus.
     fake_client = _FakeRedisClient()
     monkeypatch.setattr(rag, "get_redis_client", lambda: fake_client)
     save_chunks([_chunk("Some news")], ["AAPL", "msft"])
@@ -174,9 +147,6 @@ def test_persistence_key_ignores_ticker_order_and_case(monkeypatch):
 
 
 def test_load_chunks_returns_empty_list_on_malformed_payload(monkeypatch):
-    # A corrupted/truncated Redis value (e.g. a manual edit, a schema change
-    # in a future version) must degrade to "nothing persisted", not crash the
-    # news tab.
     fake_client = _FakeRedisClient()
     fake_client.store["rag:chunks:AAPL"] = "not valid json{{{"
     monkeypatch.setattr(rag, "get_redis_client", lambda: fake_client)
@@ -198,4 +168,4 @@ def test_save_chunks_does_not_raise_when_redis_setex_fails(monkeypatch):
             raise ConnectionError("connection reset")
 
     monkeypatch.setattr(rag, "get_redis_client", lambda: _BrokenClient())
-    save_chunks([_chunk("Whatever")], ["AAPL"])  # must not raise
+    save_chunks([_chunk("Whatever")], ["AAPL"])

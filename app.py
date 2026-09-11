@@ -1,6 +1,8 @@
 """
 Portfolio Forecasting & Optimization — Streamlit app.
 
+app.py:
+
 Layout: a sidebar to configure the universe/dates/model, and four tabs:
   1. Overview          — prices, returns, correlation of the selected universe
   2. Efficient Frontier — historical mean-variance optimization
@@ -85,6 +87,16 @@ from src.optimization import (
 )
 
 st.set_page_config(page_title="Portfolio Forecasting & Optimization", layout="wide", page_icon="📈")
+
+# Minimum number of ANNUAL observations before a yearly-frequency covariance
+# estimate is treated as trustworthy rather than just technically computable.
+# A handful of annual points cannot support a meaningful correlation
+# estimate between assets — this is a warning threshold, not a hard block:
+# the brief explicitly lists "yearly" as a valid frequency option, so it must
+# remain SELECTABLE and functional even on a short date range; the honest
+# response to too little data is a visible caveat, not silently disabling
+# the option.
+MIN_YEARLY_OBSERVATIONS_FOR_RELIABLE_COV = 8
 
 # ----------------------------------------------------------------------------------
 # Background — kept here as a real, readable
@@ -187,7 +199,18 @@ def render_sidebar() -> dict:
     st.sidebar.header("Portfolio configuration")
 
     def _apply_universe_preset() -> None:
-        preset = st.session_state["universe_preset_select"]
+        # .get(), not [...]: this callback and _apply_sector_selection below
+        # each write to the OTHER widget's session_state key (this one resets
+        # "sector_select", that one resets "universe_preset_select") — on
+        # some Streamlit rerun timings that cross-write can race with this
+        # callback firing before its own widget's key is (re)registered,
+        # raising a KeyError ("did you forget to initialize it?") instead of
+        # applying the preset. Bailing out to a no-op when the key genuinely
+        # isn't there yet is safe: worst case this one rerun doesn't apply a
+        # preset change, it doesn't corrupt any state.
+        preset = st.session_state.get("universe_preset_select")
+        if preset is None:
+            return
         if preset == "By default (5)":
             st.session_state["assets_select"] = DEFAULT_EQUITY_TICKERS.copy()
         elif preset == "Mega Caps (15)":
@@ -214,7 +237,11 @@ def render_sidebar() -> dict:
     )
 
     def _apply_sector_selection() -> None:
-        sector = st.session_state["sector_select"]
+        # Same .get()-with-guard reasoning as _apply_universe_preset above —
+        # this callback and that one cross-write each other's session_state key.
+        sector = st.session_state.get("sector_select")
+        if sector is None:
+            return
         if sector in SP500_SECTOR_UNIVERSE:
             st.session_state["assets_select"] = sorted(SP500_SECTOR_UNIVERSE[sector])
             # Reset the "Universe preset" dropdown back to a neutral state:
@@ -242,7 +269,7 @@ def render_sidebar() -> dict:
         """Sync newly-typed custom tickers into the Assets multiselect's OWN
         session_state ("assets_select") — needed because typing a
         ticker here already feeds the app's calculations correctly, but would never
-        appeared as a selected pill in the multiselect above, which reads as
+        appear as a selected pill in the multiselect above, which reads as
         broken even though it wasn't. Only tickers already in
         ALL_KNOWN_TICKERS can become a pill (the multiselect's `options` list
         is fixed, Streamlit can't display a pill for an option outside it) —
@@ -294,7 +321,15 @@ def render_sidebar() -> dict:
     today = dt.date.today()
 
     def _apply_quick_range() -> None:
-        label = st.session_state["quick_range_select"]
+        # .get(), not [...]: same defensive pattern as _apply_universe_preset /
+        # _apply_sector_selection above — a callback can fire on a rerun before
+        # its own widget's key is (re)registered in session_state (e.g. right
+        # after a cache clear forces a full script rerun). Bailing out to a
+        # no-op is safe: worst case this one rerun doesn't apply the quick-range
+        # change, it never corrupts state.
+        label = st.session_state.get("quick_range_select")
+        if label is None:
+            return
         if label != "Custom":
             st.session_state["start_date_input"] = today - dt.timedelta(days=QUICK_DATE_RANGES[label])
             st.session_state["end_date_input"] = today
@@ -311,24 +346,20 @@ def render_sidebar() -> dict:
     )
     end_date = col2.date_input("End date", value=today, max_value=today, key="end_date_input")
 
-    frequency = st.sidebar.selectbox("Frequency", options=["daily", "weekly", "monthly"], index=0)
+    frequency = st.sidebar.selectbox("Frequency", options=["daily", "weekly", "monthly", "yearly"], index=0)
+    if frequency == "yearly":
+        approx_years = (end_date - start_date).days / 365.25
+        if approx_years < MIN_YEARLY_OBSERVATIONS_FOR_RELIABLE_COV:
+            st.sidebar.caption(
+                f"⚠️ Only ~{approx_years:.0f} year(s) of history in this date range — a yearly "
+                f"covariance estimate needs at least ~{MIN_YEARLY_OBSERVATIONS_FOR_RELIABLE_COV} "
+                "annual observations to be trustworthy. Widen the date range, or expect a noisy "
+                "efficient frontier and correlation matrix at this frequency."
+            )
 
     fred_rate = fetch_current_risk_free_rate()
     rf_default = fred_rate if fred_rate is not None else DEFAULT_RISK_FREE_RATE
     rf_label = "Risk-free rate (annual)" + (" — live 3M T-bill via FRED" if fred_rate is not None else "")
-    # st.slider's `format` string only controls DISPLAY, it never scales the
-    # underlying value (streamlit/streamlit#4897) — a 0.0-0.10 fraction with
-    # format="%.2f%%" would render "0.04%" for a 4% rate instead of "4.00%".
-    # Run the widget in percentage-POINT units (0-10, step 0.05) so the format
-    # string is accurate, then convert back to the fraction every downstream
-    # function (metrics.py, optimization.py) actually expects. Step is 0.05,
-    # not a coarser 0.25: FRED's live 3-month T-bill yield (DGS3MO) is a
-    # market-traded rate that moves daily, often by less than a quarter
-    # point — a 0.25 step SNAPPED that live value to the nearest quarter
-    # point (e.g. a real 3.89% displaying as "4.00%"), which both misrepresents
-    # the actual fetched rate and made day-to-day changes look larger or more
-    # erratic than they really were. 0.05 keeps the slider easy to drag by
-    # hand while staying close enough to the live value to trust the display.
     risk_free_rate_pct = st.sidebar.slider(rf_label, 0.0, 10.0, rf_default * 100, 0.05, format="%.2f%%")
     risk_free_rate = risk_free_rate_pct / 100.0
     max_weight_pct = st.sidebar.slider(
@@ -360,7 +391,7 @@ def render_sidebar() -> dict:
              "cost — try shortening the horizon to see this drag show up). Set to 0 for the "
              "frictionless textbook comparison.",
     )
-    horizon_unit = {"daily": "trading days", "weekly": "weeks", "monthly": "months"}[frequency]
+    horizon_unit = {"daily": "trading days", "weekly": "weeks", "monthly": "months", "yearly": "years"}[frequency]
     forecast_horizon = st.sidebar.slider(
         f"Forecast horizon ({horizon_unit})", min_value=10, max_value=90, value=DEFAULT_FORECAST_HORIZON_DAYS, step=5,
         help="This slice of history at the END of your date range is held out and forecasted — "
@@ -641,14 +672,14 @@ def render_overview_tab(prices: pd.DataFrame, tickers: list[str], periods_per_ye
             "Returns stationary?": (
                 "Yes" if adf["is_stationary"] is True else "No" if adf["is_stationary"] is False else "—"
             ),
-            "Hurst exponent": f"{h:.2f}" if not np.isnan(h) else "—",
+            "Hurst exponent": f"{h:.3f}" if not np.isnan(h) else "—",
             "Regime": regime,
         })
     st.dataframe(pd.DataFrame(diag_rows).set_index("Ticker"), width='stretch')
     st.caption(
         "ADF: 'Yes' (p < 0.05) means the return series itself shows no unit root — the standard, "
         "expected result for returns (as opposed to price LEVELS, which are non-stationary by "
-        "construction, which is exactly why ARIMA differences them). Hurst: >0.55 trending "
+        "construction). Hurst: >0.55 trending "
         "(momentum), <0.45 mean-reverting, ≈0.5 a random walk — most liquid equities sit close to "
         "0.5, consistent with weak short-horizon predictability."
     )
@@ -659,15 +690,9 @@ def render_overview_tab(prices: pd.DataFrame, tickers: list[str], periods_per_ye
     # comparable-looking but not actually comparable, and the calendar
     # meaning silently depends on a different sidebar control. Converting
     # from `periods_per_year` keeps the WINDOW'S MEANING constant ("roughly
-    # the trailing quarter") across daily/weekly/monthly, which is what a
-    # rolling risk-adjusted-return chart is supposed to show — recent
+    # the trailing quarter") across daily/weekly/monthly/yearly, which is
+    # what a rolling risk-adjusted-return chart is supposed to show — recent
     # regime, not an arbitrary period count.
-    # Floor at 6: monthly frequency's quarter-equivalent (~1 period) would
-    # otherwise collapse to a statistically meaningless 1-3 point window: a
-    # "rolling Sharpe" isn't a meaningful concept on that few observations,
-    # so monthly deliberately uses a longer real-world window (6 periods =
-    # half a year) rather than a shorter one that's technically "more
-    # accurate to 3 months" but useless as a number.
     target_months = 3
     rolling_window = max(6, min(len(returns) // 4, round(periods_per_year * target_months / 12)))
     window_label = f"{rolling_window}-period (~{round(rolling_window / periods_per_year * 12)}mo)"
@@ -689,14 +714,21 @@ def render_overview_tab(prices: pd.DataFrame, tickers: list[str], periods_per_ye
     st.divider()
     st.subheader("Fundamentals")
     st.caption(
-        "Via Twelve Data (`/statistics`) — some fields may be unavailable on the free tier "
-        "depending on the exchange/plan; unavailable fields show as '—' rather than failing "
-        "the whole table. Fetched on demand (button, not automatic) to conserve API quota."
+        "Via Finnhub first; Twelve Data and then "
+        "yfinance each fill in whatever individual fields are still missing on top of that, and Twelve Data is used as the primary source outright if "
+        "Finnhub isn't configured or returns nothing — some fields may still be unavailable "
+        "depending on the exchange/plan or a temporary Yahoo rate limit. Fetched on demand to conserve API quota."
     )
-    if not LLM_SETTINGS.twelvedata_api_key:
-        st.info("Set `TWELVEDATA_API_KEY` in `.env` to enable this section.")
+    if not (LLM_SETTINGS.finnhub_api_key or LLM_SETTINGS.twelvedata_api_key):
+        st.info("Set `FINNHUB_API_KEY` (preferred) or `TWELVEDATA_API_KEY` in `.env` to enable this section.")
     elif st.button("Fetch fundamentals for selected assets"):
-        if len(tickers) > 8:
+        # The 8 req/min pacing below only protects Twelve Data's free tier — it's
+        # irrelevant (and needlessly slow) when Finnhub is configured, since
+        # fetch_fundamentals() tries Finnhub FIRST and Finnhub's own free tier
+        # is 60 req/min. Only warn about / apply the slow pacing when Twelve
+        # Data is the sole configured source (i.e. actually on the hot path).
+        twelvedata_is_primary = not LLM_SETTINGS.finnhub_api_key
+        if twelvedata_is_primary and len(tickers) > 8:
             st.caption(
                 f"⏳ {len(tickers)} tickers on an 8 req/min free-tier limit — this will take "
                 f"~{len(tickers) * 8 // 60 + 1} min. Paced deliberately to avoid hitting the rate limit."
@@ -705,12 +737,9 @@ def render_overview_tab(prices: pd.DataFrame, tickers: list[str], periods_per_ye
         rows = []
         plan_restricted = False
         for i, ticker in enumerate(tickers):
-            if i > 0:
+            if i > 0 and twelvedata_is_primary:
                 time.sleep(7.5)  # keeps us under Twelve Data's free-tier 8 req/min, proactively
             if plan_restricted:
-                # Already confirmed this plan can't use /statistics beyond the demo
-                # symbol — no point burning quota (or the user's time) retrying it
-                # per ticker; every subsequent call would just 403 identically.
                 f = None
             else:
                 try:
@@ -812,12 +841,7 @@ def render_frontier_tab(
             marker=dict(size=16, color="red", symbol="star"), name="Max-Sharpe portfolio",
         ))
         fig.update_layout(xaxis_title="Annualised volatility", yaxis_title="Annualised expected return", height=460)
-        # `key` tied to the actual ticker set: without it, Plotly.js can retain
-        # a previous zoom/pan state across Streamlit reruns (the same chart
-        # component instance persists unless its key changes), which makes a
-        # brand-new dataset render inside a stale, wrongly-zoomed viewport —
-        # visually looking like most points vanished when they're all still
-        # there, just outside the leftover zoom window.
+
         st.plotly_chart(fig, width='stretch', key=f"frontier_chart_{'-'.join(sorted(tickers))}")
 
     with col_weights:
@@ -839,9 +863,7 @@ def render_frontier_tab(
                  "max-weight cap is doing its job.",
         )
         st.write("**Optimal weights (max Sharpe):**")
-        # Filter on magnitude (not `weights > 0.001`) so short positions
-        # still show as negative weights instead of being silently dropped
-        # from the table whenever short selling is enabled.
+
         significant = weights[weights.abs() > 0.001]
         weights_display = significant.reindex(significant.abs().sort_values(ascending=False).index)
         st.dataframe(weights_display.map(lambda w: f"{w:.1%}").rename("Weight"), width='stretch')
@@ -926,53 +948,113 @@ def render_forecast_compare_tab(
         )
         return None
 
-    train_prices = prices.iloc[:-horizon]
-    test_prices = prices.iloc[-horizon:]
+    train_prices = prices.iloc[:-(horizon)]
+    test_prices = prices.iloc[-(horizon + 1):]
     test_returns = compute_returns(test_prices[tickers])
     periods_per_year = FREQUENCY_TO_PERIODS_PER_YEAR[config["frequency"]]
     rf = config["risk_free_rate"]
 
     with st.spinner(f"Fitting {config['forecast_model']} per asset..."):
-        forecasted_prices = forecast_all_assets(train_prices[tickers], horizon, config["forecast_model"])
+        forecasted_prices = forecast_all_assets(
+            train_prices[tickers], horizon, config["forecast_model"], config["frequency"],
+        )
 
-    st.subheader("Forecast fan chart — single-asset confidence band")
+    st.subheader("Forecast fan chart — confidence band")
     st.caption(
         "The point forecast above feeds the portfolio optimizer, but a single number hides how "
         "much uncertainty compounds over the horizon. The shaded band (95% confidence interval, "
         "widening with `√horizon` — see forecasting.py) shows further-out points are genuinely "
         "less reliable, not just 'the same trend, more of it.'"
     )
-    fan_ticker = st.selectbox("Asset to inspect", options=tickers, key="fan_chart_ticker")
-    # Re-uses the exact same per-asset model already fit above via forecast_all_assets —
-    # naive/ets/arima_forecast all already compute a lower/upper band internally
-    # (see forecasting.py), forecast_all_assets just doesn't surface it since the
-    # optimizer only ever needs the point forecast. Calling the model function
-    # directly for ONE asset here is cheap (one extra fit, not per-ticker) and
-    # avoids touching forecast_all_assets' return shape, which backtesting.py and
-    # optimization.py both depend on staying a plain price DataFrame.
-    fan_result = FORECAST_MODELS[config["forecast_model"]](train_prices[fan_ticker], horizon)
-    fig_fan = go.Figure()
-    hist_tail = train_prices[fan_ticker].iloc[-60:]  # last ~60 points of history for context, not the whole series
-    fig_fan.add_trace(go.Scatter(
-        x=hist_tail.index, y=hist_tail.values, name="Historical", mode="lines", line=dict(color="#1f77b4"),
-    ))
-    fig_fan.add_trace(go.Scatter(
-        x=fan_result["upper"].index, y=fan_result["upper"].values, mode="lines",
-        line=dict(width=0), showlegend=False, hoverinfo="skip",
-    ))
-    fig_fan.add_trace(go.Scatter(
-        # fill="tonexty" fills the area between THIS trace and the one added right
-        # before it (upper) — this order (upper first, then lower with the fill) is
-        # what actually draws the widening band, not incidental.
-        x=fan_result["lower"].index, y=fan_result["lower"].values, name="95% confidence band", mode="lines",
-        line=dict(width=0), fill="tonexty", fillcolor="rgba(255,127,14,0.25)", hoverinfo="skip",
-    ))
-    fig_fan.add_trace(go.Scatter(
-        x=fan_result["forecast"].index, y=fan_result["forecast"].values, name="Forecast", mode="lines",
-        line=dict(color="#ff7f0e"),
-    ))
-    fig_fan.update_layout(yaxis_title="Price", height=380, legend_title=None, margin=dict(t=10))
-    st.plotly_chart(fig_fan, width='stretch')
+    MAX_FAN_CHART_TICKERS = 4  # more than this and overlapping confidence bands become unreadable
+    fan_tickers = st.multiselect(
+        "Asset(s) to inspect", options=tickers, default=[tickers[0]], key="fan_chart_tickers",
+        max_selections=MAX_FAN_CHART_TICKERS,
+        help=f"Compare up to {MAX_FAN_CHART_TICKERS} assets' forecasts side by side. With more "
+             "than one selected, prices are shown on very different scales unless rebased — "
+             "see the toggle below.",
+    )
+    if not fan_tickers:
+        st.info("Pick at least one asset above to see its forecast.")
+    else:
+        rebase_fan = False
+        if len(fan_tickers) > 1:
+            rebase_fan = st.checkbox(
+                "Rebase to 100 at the start of the shown history", value=True, key="fan_chart_rebase",
+                help="With several assets at very different price levels (e.g. $20 vs $400), "
+                     "rebasing makes their forecasted TRENDS directly comparable on one chart. "
+                     "Turn off to see actual forecasted prices — only readable with assets on "
+                     "similar price levels.",
+            )
+        fig_fan = go.Figure()
+        # Translucent per-ticker fill colors, matched by index to the line colors below —
+        # Plotly needs an explicit rgba() string for the band's fill (a plain hex color has
+        # no alpha channel), so this can't just reuse a hex palette directly.
+        fan_fill_colors = [
+            "rgba(31,119,180,0.20)", "rgba(255,127,14,0.20)",
+            "rgba(44,160,44,0.20)", "rgba(214,39,40,0.20)",
+        ]
+        fan_line_colors = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728"]
+        for i, ticker in enumerate(fan_tickers):
+            fan_result = FORECAST_MODELS[config["forecast_model"]](
+                train_prices[ticker], horizon, frequency=config["frequency"],
+            )
+            hist_tail = train_prices[ticker].iloc[-60:]  # last ~60 points of history for context, not the whole series
+
+            if rebase_fan:
+                # Divide every series (history, forecast, AND both band edges) by the SAME
+                # scalar (the first historical point shown) — this preserves the band's
+                # PROPORTIONAL width relative to the forecast; scaling only the line and
+                # leaving the band on its original absolute scale would make the band look
+                # wrong relative to the (now rebased) line it's supposed to surround.
+                scale = 100.0 / hist_tail.iloc[0]
+                hist_y = hist_tail.values * scale
+                forecast_y = fan_result["forecast"].values * scale
+                upper_y = fan_result["upper"].values * scale
+                lower_y = fan_result["lower"].values * scale
+            else:
+                hist_y = hist_tail.values
+                forecast_y = fan_result["forecast"].values
+                upper_y = fan_result["upper"].values
+                lower_y = fan_result["lower"].values
+
+            # Single ticker selected: use the FIXED blue=historical / orange=forecast
+            # scheme this chart was originally designed around (matches the
+            # documented screenshot) — reusing one palette color for both lines
+            # would make the whole chart monochrome. With 2+ tickers, fall back
+            # to one distinct color PER TICKER (covering both its historical and
+            # forecast trace), since that's what actually lets you tell tickers
+            # apart when comparing several at once — a fixed orange for every
+            # ticker's forecast would make them indistinguishable from each other.
+            if len(fan_tickers) == 1:
+                hist_color, forecast_color, fill_color = "#1f77b4", "#ff7f0e", "rgba(255,127,14,0.20)"
+            else:
+                hist_color = forecast_color = fan_line_colors[i % len(fan_line_colors)]
+                fill_color = fan_fill_colors[i % len(fan_fill_colors)]
+            fig_fan.add_trace(go.Scatter(
+                x=hist_tail.index, y=hist_y, name=f"{ticker} — Historical", mode="lines",
+                line=dict(color=hist_color),
+            ))
+            fig_fan.add_trace(go.Scatter(
+                x=fan_result["upper"].index, y=upper_y, mode="lines",
+                line=dict(width=0), showlegend=False, hoverinfo="skip",
+            ))
+            fig_fan.add_trace(go.Scatter(
+                # fill="tonexty" fills the area between THIS trace and the one added right
+                # before it (upper) — this order (upper first, then lower with the fill) is
+                # what actually draws the widening band, not incidental.
+                x=fan_result["lower"].index, y=lower_y, name=f"{ticker} — 95% band", mode="lines",
+                line=dict(width=0), fill="tonexty", fillcolor=fill_color, hoverinfo="skip",
+            ))
+            fig_fan.add_trace(go.Scatter(
+                x=fan_result["forecast"].index, y=forecast_y, name=f"{ticker} — Forecast", mode="lines",
+                line=dict(color=forecast_color, dash="dash"),
+            ))
+        fig_fan.update_layout(
+            yaxis_title="Rebased to 100" if rebase_fan else "Price",
+            height=420, legend_title=None, margin=dict(t=10),
+        )
+        st.plotly_chart(fig_fan, width='stretch')
 
     weight_bounds = resolve_weight_bounds(config["max_weight_per_asset"], config["allow_short_selling"])
 
@@ -1135,11 +1217,12 @@ def render_walk_forward_section(prices: pd.DataFrame, tickers: list[str], config
             config["risk_free_rate"], periods_per_year, WALK_FORWARD_MIN_TRAIN_PERIODS,
             config["max_weight_per_asset"], config["allow_short_selling"], config["transaction_cost_bps"],
             config["cov_method"], config["n_factors"],
+            frequency=config["frequency"],
         )
 
     # Split into sub-tabs — distribution, summary, period-over-period, and the
     # raw table each answer a different question, and stacking all four
-    # vertically meant a lot of scrolling to reach whichever one a reader
+    # vertically would mean a lot of scrolling to reach whichever one a reader
     # actually wanted. Each sub-tab below is self-contained and independently
     # scannable, same pattern already used for the Overview tab's own
     # Macro & Risk / Prices & Analytics split.
@@ -1186,9 +1269,9 @@ def render_walk_forward_section(prices: pd.DataFrame, tickers: list[str], config
         comparison = compare_to_previous_period(results)
         display_columns = ["window", "window_end", "portfolio"]
         column_config = {
-            # All this app's frequencies (daily/weekly/monthly) place bars at
-            # midnight -- the time component is always 00:00:00 and never
-            # informative, so this column is rendered as a plain date.
+            # All this app's frequencies (daily/weekly/monthly/yearly) place
+            # bars at midnight -- the time component is always 00:00:00 and
+            # never informative, so this column is rendered as a plain date.
             "window_end": st.column_config.DateColumn("window_end", format="YYYY-MM-DD"),
         }
         for metric in ["annual_return", "annual_volatility", "sharpe_ratio", "sortino_ratio", "max_drawdown"]:
@@ -1281,11 +1364,6 @@ def render_ai_analyst_tab(
 
             st.markdown("**Sentiment by ticker**")
             for ticker, s in sentiment_by_ticker.items():
-                # st.markdown() (not st.caption(), which renders in Streamlit's
-                # muted secondary-text grey — fine for fine print, but this
-                # IS the section's main content) matches the normal body-text
-                # color/weight used everywhere else on this tab, keeping the
-                # ticker itself bold so each line still scans easily in a list.
                 if s is None:
                     st.markdown(f"**{ticker}:** sentiment not available (no headlines fetched, or no source configured).")
                     continue
@@ -1348,15 +1426,6 @@ def render_chatbot_tab() -> None:
         # Cap history length — keep only the most recent turns (see
         # config.MAX_CHAT_HISTORY_MESSAGES's own comment for why this exists).
         st.session_state["chat_history"] = st.session_state["chat_history"][-MAX_CHAT_HISTORY_MESSAGES:]
-        # Rerun rather than rendering this turn inline here: st.chat_input loses
-        # its pinned-to-bottom behaviour when nested inside a tab (a documented
-        # Streamlit limitation — it only auto-pins at the script's top level),
-        # so anything rendered AFTER calling it in code would appear BELOW it
-        # on screen instead of above. Rerunning makes the history loop above
-        # (which always executes BEFORE chat_input, regardless of pinning)
-        # pick up and display this turn naturally on the next pass — the only
-        # ordering guarantee that doesn't depend on chat_input's pinning
-        # working correctly inside a tab.
         st.rerun()
 
     with st.expander("🔬 Search academic literature"):
@@ -1370,16 +1439,6 @@ def render_chatbot_tab() -> None:
             key="academic_lit_query",
         )
         if st.button("Search papers", key="search_academic_lit") and lit_query.strip():
-            # Same query-expansion the chatbot's automatic citations use (see
-            # academic_search.detect_methodology_terms): a bare finance term
-            # like "Sharpe" or a plain-English question like "what is the
-            # Sharpe ratio?" matches arXiv/Semantic Scholar authors and
-            # unrelated fields sharing that word (there are real physicists
-            # named Sharpe) far more often than it matches the actual
-            # finance concept — expanding to the same finance-context query
-            # the automatic citations use fixes that for any RECOGNISED term,
-            # without changing behaviour for a query that already names one
-            # (search_academic_papers itself is untouched either way).
             detected_terms = detect_methodology_terms(lit_query)
             effective_query = METHODOLOGY_SEARCH_QUERIES[detected_terms[0]] if detected_terms else lit_query.strip()
             if detected_terms:
@@ -1423,12 +1482,6 @@ def main() -> None:
     )
 
     with tab_overview:
-        # Split into sub-tabs: macro panel + price/correlation/
-        # diagnostics/fundamentals used to all stack vertically in one tab,
-        # requiring a lot of scrolling to see everything. Nested st.tabs()
-        # groups them logically instead — render_macro_panel() and
-        # render_overview_tab() are both unchanged internally, this only
-        # changes where their output lands.
         sub_macro, sub_prices = st.tabs(["Macro & Risk", "Prices & Analytics"])
         with sub_macro:
             macro_context = render_macro_panel()

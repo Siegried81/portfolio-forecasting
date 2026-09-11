@@ -13,11 +13,7 @@ services:
       STREAMLIT_SERVER_ADDRESS: "0.0.0.0"
       PYTHONDONTWRITEBYTECODE: "1"
       PYTHONUNBUFFERED: "1"
-      # Optional: uncomment to use the Redis service below instead of
-      # @st.cache_data's in-process cache (see src/cache.py). Left commented
-      # by default so `docker compose up` with no changes behaves exactly as
-      # before — Redis is a next-step production concern, not a requirement.
-      # REDIS_URL: "redis://redis:6379/0"
+
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8501/_stcore/health')"]
       interval: 30s
@@ -27,11 +23,6 @@ services:
     restart: unless-stopped
     # depends_on:
     #   - redis
-
-  # Optional — only starts if you run `docker compose --profile with-redis up`.
-  # See src/cache.py for what this buys over @st.cache_data: a cache that
-  # survives a container restart and can be shared across multiple app
-  # instances, neither of which the default in-process cache can do.
   redis:
     image: redis:7-alpine
     profiles: ["with-redis"]

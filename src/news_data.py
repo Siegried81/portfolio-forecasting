@@ -353,11 +353,11 @@ def _fetch_cik_for_ticker(ticker: str) -> str | None:
     every other fetcher in this module.
 
     A bare company-name text search (`q='"{company_name}"'`) also matches
-    UNRELATED companies whose name happens to contain the same word —
-    confirmed live: searching "Apple" for AAPL surfaces *Apple Hospitality
-    REIT*'s own 8-Ks mixed in alongside Apple Inc.'s. This lookup gives
-    `fetch_sec_filings` the real CIK to filter the search results down to the
-    actual company, rather than trusting the free-text match alone.
+    UNRELATED companies whose name happens to contain the same word (e.g.
+    searching "Apple" for AAPL also surfaces Apple Hospitality REIT's own
+    8-Ks). This lookup gives `fetch_sec_filings` the real CIK to filter the
+    search results down to the actual company, rather than trusting the
+    free-text match alone.
     """
     headers = {"User-Agent": SEC_USER_AGENT}
     try:
@@ -411,7 +411,7 @@ def fetch_sec_filings(company_name: str, ticker: str, max_filings: int = 3, form
 
     The underlying full-text search matches on the bare
     `company_name` string, which can also match unrelated companies sharing a
-    word in their name (e.g. "Apple" matching *Apple Hospitality REIT* as well
+    word in their name (e.g. "Apple" matching Apple Hospitality REIT as well
     as Apple Inc.). Results are filtered down to hits whose own `ciks`
     field contains `ticker`'s actual CIK (via `_fetch_cik_for_ticker`) before
     being returned — and deduplicated by accession number, since the same
@@ -461,10 +461,9 @@ def fetch_sec_filings(company_name: str, ticker: str, max_filings: int = 3, form
         # Direct link to the specific filing (not just the company's generic
         # filing list) when we have both pieces — standard SEC EDGAR index
         # URL format: /Archives/edgar/data/{cik}/{accession-no-dashes}/{accession}-index.htm.
-        # Same "field-shape not verified against a live query" caveat as the
-        # rest of this function applies here too, so this stays a best-effort
-        # link with the generic-page fallback kept for when either
-        # piece is missing or the format doesn't match what's expected.
+        # Best-effort (see this function's field-shape caveat above) — falls
+        # back to the generic company/search page when either piece is
+        # missing or the format doesn't match what's expected.
         if cik and accession:
             url = f"https://www.sec.gov/Archives/edgar/data/{cik}/{accession.replace('-', '')}/{accession}-index.htm"
         elif cik:
@@ -519,13 +518,13 @@ def fetch_sec_insider_trades(company_name: str, ticker: str, max_filings: int = 
 FINNHUB_SENTIMENT_URL = "https://finnhub.io/api/v1/news-sentiment"
 
 # Circuit breaker: a 403 on this endpoint means the current Finnhub plan
-# doesn't include it AT ALL — confirmed live (403 on every ticker, every
-# call) — not a transient rate limit that resolves itself. Retrying
-# identically on every subsequent ticker just wastes a network round-trip
-# and repeats a warning for something already known. Once seen, skip
-# straight to None (VADER fallback) for the rest of this process. Module-
-# level (not per-ticker), same pattern as market_data.py's Yahoo circuit
-# breaker: a plan restriction is an account-wide fact, not a per-ticker one.
+# doesn't include it AT ALL, not a transient rate limit that resolves
+# itself. Retrying identically on every subsequent ticker just wastes a
+# network round-trip and repeats a warning for something already known.
+# Once seen, skip straight to None (VADER fallback) for the rest of this
+# process. Module-level (not per-ticker), same pattern as market_data.py's
+# Yahoo circuit breaker: a plan restriction is an account-wide fact, not a
+# per-ticker one.
 _finnhub_sentiment_plan_restricted = False
 
 
@@ -560,9 +559,8 @@ def fetch_finnhub_sentiment(ticker: str) -> dict[str, Any] | None:
     independent aggregation, not a second opinion computed from the same small
     sample already on screen.
 
-    CAVEAT (confirmed live, not just reported by others): this endpoint
-    is plan-restricted on this app's free-tier Finnhub account —
-    every ticker 403s. Fails soft (returns None) on ANY error, including a
+    Note: this endpoint is plan-restricted on some Finnhub free-tier accounts
+    (every ticker 403s). Fails soft (returns None) on ANY error, including a
     403, so `get_ticker_sentiment` below always has the local VADER fallback
     to fall back to rather than surfacing a raw API error to the user. A
     confirmed 403 ALSO trips the module-level circuit breaker above, so every
@@ -656,10 +654,9 @@ def compute_local_sentiment(articles: list[dict[str, Any]]) -> dict[str, Any] | 
 # HuggingFace deprecated the classic `api-inference.huggingface.co` domain in
 # favour of a unified router — `router.huggingface.co/hf-inference/models/...`
 # is the current endpoint for this same serverless Inference API, per HF's own
-# migration notice ("api-inference.huggingface.co is no longer supported.
-# Please use https://router.huggingface.co/hf-inference instead"). Request
-# shape is unchanged; the RESPONSE shape is NOT — see fetch_finbert_sentiment's
-# docstring for the nested-list wrinkle this move introduced.
+# migration notice. Request shape is unchanged; the RESPONSE shape is NOT —
+# see fetch_finbert_sentiment's docstring for the nested-list wrinkle this
+# migration introduced.
 FINBERT_INFERENCE_URL = "https://router.huggingface.co/hf-inference/models/ProsusAI/finbert"
 FINBERT_MAX_ARTICLES = 5  # one HTTP request per article (see fetch_finbert_sentiment's
 # docstring for why) — capped so one ticker's sentiment doesn't cost 10+ round-trips
@@ -682,27 +679,19 @@ def fetch_finbert_sentiment(articles: list[dict[str, Any]]) -> dict[str, Any] | 
     key configured, or every request failed.
 
     Scores each of the first `FINBERT_MAX_ARTICLES` articles' title+description
-    ONE AT A TIME (not batched) — deliberately, since this environment cannot
-    reach huggingface.co to verify live whether a batched multi-text request
-    returns a flat list or a list-of-lists (both shapes are used across
-    different HF-hosted models); scoring one text per call keeps the intent
-    unambiguous even though, as it turns out below, the RESPONSE shape for a
-    single text still varies by endpoint generation.
+    one at a time (not batched), since HF-hosted models don't consistently
+    share a single-vs-batch response shape across endpoints — scoring one
+    text per call keeps the request shape unambiguous.
 
-    Response-shape handling (confirmed via a live capture on the current
-    endpoint, 2026-09-09): the old `api-inference.huggingface.co` endpoint
-    returned a FLAT list for one input string —
+    Response-shape handling: the older `api-inference.huggingface.co`
+    endpoint returned a FLAT list for one input string —
     `[{"label": "positive", "score": 0.7}, {"label": "negative", ...}, ...]`.
     The current `router.huggingface.co/hf-inference` endpoint wraps that same
     list in one extra layer — `[[{"label": "positive", "score": 0.7}, ...]]`
     — a list containing ONE list of class scores, not a list of class-score
-    dicts directly. Silently NOT unwrapping this was the actual root cause of
-    every ticker reading "Neutral (score +0.00)" after the migration to the
-    router endpoint: `isinstance(item, dict)` filtered out every element
-    (each one being a list, not a dict), leaving positive=negative=0.0 with
-    no exception raised anywhere. Both shapes are now handled: if the
-    top-level list's first element is itself a list, that inner list is used
-    as the class-score list instead.
+    dicts directly. Both shapes are handled: if the top-level list's first
+    element is itself a list, that inner list is used as the class-score
+    list instead.
 
     Returns None (never raises) if: no `HUGGINGFACE_API_KEY` configured, no
     articles to score, every request fails (network, rate limit, or the
@@ -736,14 +725,10 @@ def fetch_finbert_sentiment(articles: list[dict[str, Any]]) -> dict[str, Any] | 
             continue
 
         # router.huggingface.co wraps a single-input result in an extra list
-        # layer: [[{"label": ..., "score": ...}, ...]] instead of the older
-        # api-inference.huggingface.co's flat [{"label": ..., "score": ...}, ...].
-        # Unwrap that one extra layer when present — see this function's own
-        # docstring for how this exact shape mismatch produced the "always
-        # neutral" bug. The flat shape (older endpoint, and what this app's
-        # own tests mock) still works unchanged: payload[0] is then a dict,
-        # not a list, so no unwrapping happens and class_scores is built the
-        # same way as before.
+        # layer — see this function's own docstring. The flat shape (older
+        # endpoint) still works unchanged: payload[0] is then a dict, not a
+        # list, so no unwrapping happens and class_scores is built the same
+        # way either way.
         if payload and isinstance(payload[0], list):
             payload = payload[0]
 

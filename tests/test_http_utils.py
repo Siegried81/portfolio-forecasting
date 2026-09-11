@@ -1,8 +1,4 @@
-"""
-Unit tests for src/http_utils.py's safe_get_json — the shared "GET, expect
-JSON, fail soft" helper used by macro_data.py's two FRED fetchers. Fully
-mocked — no real network call.
-"""
+"""Unit tests for src/http_utils.py's safe_get_json. Fully mocked."""
 import requests
 
 import src.http_utils as http_utils
@@ -69,5 +65,4 @@ def test_safe_get_json_never_raises_even_with_a_context_label(monkeypatch):
     def _raise(*a, **k):
         raise requests.RequestException("down")
     monkeypatch.setattr(http_utils.requests, "get", _raise)
-    # Must not raise, context is purely for the log line.
     assert safe_get_json("http://example.com", context="DGS10") is None

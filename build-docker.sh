@@ -1,7 +1,5 @@
 #!/bin/bash
-# Build portfolio-forecasting Docker image on WSL
-
-cd /mnt/d/Users/Siegried/Desktop/Becode/portfolio-forecasting
+# Build portfolio-forecasting Docker image. Run from the repo root.
 
 echo "🐳 Building Docker image for portfolio-forecasting..."
 echo "This takes 3-5 minutes on first build."

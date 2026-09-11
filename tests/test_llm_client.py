@@ -1,16 +1,4 @@
-"""
-Unit tests for src/llm_client.py — the single seam every LLM call in the app
-goes through. Priority: the Groq -> [hosted fallback providers] -> Ollama
-cascade (the whole reason this module exists) and the token-budget
-truncation, not the underlying SDK/HTTP internals of any one provider.
-
-As of 2026-09-08 the hosted-fallback tier is a configurable ORDERED LIST
-(OpenRouter, Cerebras, SambaNova — whichever have a key set), all sharing one
-implementation (`_call_openai_compatible_provider`) since they speak the
-identical OpenAI-compatible wire protocol. Tests target that shared function
-plus the provider-selection logic (`_fallback_providers`), rather than one
-near-identical test per provider.
-"""
+"""Unit tests for src/llm_client.py — priority on the Groq -> hosted fallbacks -> Ollama cascade."""
 import dataclasses
 
 import pytest
@@ -20,22 +8,16 @@ from src.llm_client import LLMUnavailableError, _HostedProvider, chat, truncate_
 
 
 def _patch_settings(monkeypatch, **overrides):
-    """LLM_SETTINGS is a frozen dataclass (config.py) — same pattern already
-    used in test_market_data.py / test_macro_data.py for the same reason."""
     fake = dataclasses.replace(llm_client.LLM_SETTINGS, **overrides)
     monkeypatch.setattr(llm_client, "LLM_SETTINGS", fake)
 
 
 def _no_hosted_fallbacks(monkeypatch):
-    """Most cascade tests want to control Groq/Ollama in isolation — clear
-    every hosted-fallback key so `_fallback_providers()` returns [] and the
-    cascade behaves as a clean 2-tier Groq->Ollama test, unless a test
-    explicitly re-populates one."""
     _patch_settings(monkeypatch, openrouter_api_key=None, cerebras_api_key=None, sambanova_api_key=None)
 
 
 # ---------------------------------------------------------------------------
-# chat() — the Groq -> [hosted fallbacks] -> Ollama -> LLMUnavailableError cascade
+# chat() cascade
 # ---------------------------------------------------------------------------
 
 def test_chat_returns_groq_result_and_backend_label_when_groq_succeeds(monkeypatch):
@@ -65,8 +47,6 @@ def test_chat_falls_back_to_first_configured_hosted_provider_when_groq_fails(mon
 
 
 def test_chat_tries_hosted_fallbacks_in_order_and_stops_at_first_success(monkeypatch):
-    # OpenRouter and Cerebras both configured; OpenRouter fails, Cerebras succeeds
-    # -> SambaNova (unconfigured here) must never even be considered.
     _patch_settings(monkeypatch, openrouter_api_key="or-key", cerebras_api_key="cb-key", sambanova_api_key=None)
     monkeypatch.setattr(llm_client, "_call_groq", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("Groq down")))
 
@@ -105,7 +85,7 @@ def test_chat_raises_llm_unavailable_when_absolutely_everything_fails(monkeypatc
 
 
 # ---------------------------------------------------------------------------
-# _call_groq — key rotation on rate limit, fail-fast on other errors
+# _call_groq
 # ---------------------------------------------------------------------------
 
 def test_call_groq_raises_llm_unavailable_with_no_keys_configured(monkeypatch):
@@ -115,7 +95,7 @@ def test_call_groq_raises_llm_unavailable_with_no_keys_configured(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# _fallback_providers — which hosted providers are configured, and in what order
+# _fallback_providers
 # ---------------------------------------------------------------------------
 
 def test_fallback_providers_empty_when_no_keys_configured(monkeypatch):
@@ -124,8 +104,6 @@ def test_fallback_providers_empty_when_no_keys_configured(monkeypatch):
 
 
 def test_fallback_providers_includes_only_configured_ones_in_fixed_order(monkeypatch):
-    # SambaNova configured but NOT OpenRouter/Cerebras -> only SambaNova appears,
-    # confirming a provider is skipped entirely (not attempted) when its key is unset.
     _patch_settings(monkeypatch, openrouter_api_key=None, cerebras_api_key=None, sambanova_api_key="sn-key")
     labels = [p.label for p in llm_client._fallback_providers()]
     assert labels == ["sambanova"]
@@ -140,7 +118,7 @@ def test_fallback_providers_order_is_openrouter_then_cerebras_then_sambanova(mon
 
 
 # ---------------------------------------------------------------------------
-# _call_openai_compatible_provider — the shared implementation
+# _call_openai_compatible_provider
 # ---------------------------------------------------------------------------
 
 def test_call_openai_compatible_provider_sends_bearer_auth_to_the_right_url(monkeypatch):
@@ -206,7 +184,6 @@ def test_count_tokens_falls_back_to_char_heuristic_when_tiktoken_unavailable(mon
     def _broken_get_encoding(name):
         raise RuntimeError("no network access to fetch encoding")
     monkeypatch.setattr(llm_client.tiktoken, "get_encoding", _broken_get_encoding)
-    # Fallback is len(text) // 4 — must not raise, must return a plausible count.
     assert llm_client._count_tokens("a" * 40) == 10
 
 
@@ -214,21 +191,14 @@ def test_truncate_to_token_budget_never_raises_when_tiktoken_unavailable(monkeyp
     def _broken_get_encoding(name):
         raise RuntimeError("no network access to fetch encoding")
     monkeypatch.setattr(llm_client.tiktoken, "get_encoding", _broken_get_encoding)
-    # Short text: _count_tokens falls back cleanly, short-text branch taken.
     assert truncate_to_token_budget("short text", max_tokens=1000) == "short text"
 
 
 def test_truncate_to_token_budget_degrades_to_char_truncation_when_encoding_unavailable(monkeypatch):
-    # Regression test: the truncation branch itself used to call
-    # tiktoken.get_encoding() unguarded and crashed with an uncaught
-    # HTTPError when the encoding couldn't be fetched (confirmed live in
-    # this project's own sandboxed network — openaipublic.blob.core.windows.net
-    # is not on the allowed-domains list). Long text forces the truncation
-    # branch to actually run.
     def _broken_get_encoding(name):
         raise RuntimeError("no network access to fetch encoding")
     monkeypatch.setattr(llm_client.tiktoken, "get_encoding", _broken_get_encoding)
     long_text = "word " * 5000
-    result = truncate_to_token_budget(long_text, max_tokens=50)  # must not raise
+    result = truncate_to_token_budget(long_text, max_tokens=50)
     assert result.endswith("[...truncated...]")
     assert len(result) < len(long_text)

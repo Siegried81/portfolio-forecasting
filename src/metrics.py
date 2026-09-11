@@ -35,7 +35,7 @@ def portfolio_returns(asset_returns: pd.DataFrame, weights: pd.Series) -> pd.Ser
     (a classic silent bug when weights come from a different function) fails loud
     via a KeyError rather than silently multiplying the wrong asset by the wrong weight.
     """
-    aligned = asset_returns[weights.index]
+    aligned = asset_returns[weights.index].dropna(how="any")
     return aligned.mul(weights, axis=1).sum(axis=1)
 
 

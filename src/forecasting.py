@@ -1,9 +1,10 @@
 """
-Price forecasting models — statsmodels-based (NOT Kats: Kats has been effectively
-unmaintained since 2021 and conflicts with modern pandas/numpy, which would burn
-hours of a 2-day deadline on dependency resolution instead of on the actual
-analysis). statsmodels is the industry-standard, well-maintained alternative and
-is what most quant/finance teams actually reach for.
+Price forecasting models — statsmodels-based (NOT Kats: Kats was effectively
+less actively maintained around the time this project's stack was chosen, and
+conflicts with modern pandas/numpy versions, which would burn hours of a 2-day
+deadline on dependency resolution instead of on the actual analysis).
+statsmodels is the industry-standard, well-maintained alternative and is what
+most quant/finance teams actually reach for.
 
 Six models, increasing sophistication, all returning the SAME shape so the
 optimization layer doesn't need to know which one produced a forecast:
@@ -60,12 +61,26 @@ warnings.filterwarnings("ignore", category=RuntimeWarning)
 ForecastResult = dict[str, pd.Series]  # {"forecast": Series, "lower": Series, "upper": Series}
 
 
-def _future_index(history: pd.Series, horizon: int) -> pd.DatetimeIndex:
-    """Business-day index continuing directly after the last observed date."""
-    return pd.bdate_range(start=history.index[-1], periods=horizon + 1, freq="B")[1:]
+def _future_index(
+    history: pd.Series,
+    horizon: int,
+    frequency: str = "daily",
+) -> pd.DatetimeIndex:
+    """Return future timestamps matching the frequency of the input series."""
+    frequency_aliases = {
+        "daily": "B",
+        "weekly": "W-FRI",
+        "monthly": "ME",
+        "yearly": "YE",
+    }
+    try:
+        alias = frequency_aliases[frequency]
+    except KeyError as exc:
+        raise ValueError(f"Unsupported forecast frequency: {frequency}") from exc
+    return pd.date_range(start=history.index[-1], periods=horizon + 1, freq=alias)[1:]
 
 
-def naive_forecast(prices: pd.Series, horizon: int) -> ForecastResult:
+def naive_forecast(prices: pd.Series, horizon: int, *, frequency: str = "daily") -> ForecastResult:
     """Random walk with drift: tomorrow's price = last price + average historical daily change."""
     daily_changes = prices.diff().dropna()
     drift = daily_changes.mean()
@@ -76,7 +91,7 @@ def naive_forecast(prices: pd.Series, horizon: int) -> ForecastResult:
     # Widening confidence band ~ sqrt(t) x historical daily std dev (standard random-walk property)
     std = daily_changes.std(ddof=1)
     band = std * np.sqrt(steps)
-    idx = _future_index(prices, horizon)
+    idx = _future_index(prices, horizon, frequency)
     return {
         "forecast": pd.Series(point_forecast, index=idx, name="naive"),
         "lower": pd.Series(point_forecast - 1.96 * band, index=idx),
@@ -84,21 +99,18 @@ def naive_forecast(prices: pd.Series, horizon: int) -> ForecastResult:
     }
 
 
-def ets_forecast(prices: pd.Series, horizon: int) -> ForecastResult:
+def ets_forecast(prices: pd.Series, horizon: int, *, frequency: str = "daily") -> ForecastResult:
     """Holt's linear-trend Exponential Smoothing."""
     if len(prices) < MIN_HISTORY_POINTS_FOR_FORECAST:
-        return naive_forecast(prices, horizon)
-    # Fitting directly on `prices` (a real trading-day
-    # DatetimeIndex, irregular due to weekends/holidays) makes statsmodels
-    # raise "FutureWarning: No supported index is available" — it can't infer
-    # a fixed frequency from actual market dates, and its own message warns a
-    # future release will RAISE instead of warn here. Harmless today because
-    # this app never calls the FITTED model's own date-aware forecast() —
-    # `_future_index()` below reconstructs the real output dates
-    # independently from `prices` itself, untouched. Fitting on a plain
-    # positional index instead sidesteps the ambiguity at the root, rather
-    # than just suppressing the symptom (and rather than risking a future
-    # statsmodels upgrade turning this into a hard crash).
+        return naive_forecast(prices, horizon, frequency=frequency)
+    # Fitting directly on `prices` (a real trading-day DatetimeIndex,
+    # irregular due to weekends/holidays) makes statsmodels raise "FutureWarning:
+    # No supported index is available" — it can't infer a fixed frequency from
+    # actual market dates. Harmless in this app because it never calls the
+    # fitted model's own date-aware forecast() — `_future_index()` below
+    # reconstructs the real output dates independently from `prices` itself,
+    # untouched. Fitting on a plain positional index instead sidesteps the
+    # ambiguity at the root, rather than just suppressing the warning.
     fit_values = prices.reset_index(drop=True)
     model = ExponentialSmoothing(fit_values, trend="add", damped_trend=True, initialization_method="estimated")
     fitted = model.fit(optimized=True)
@@ -107,7 +119,7 @@ def ets_forecast(prices: pd.Series, horizon: int) -> ForecastResult:
     resid_std = fitted.resid.std(ddof=1)
     steps = np.arange(1, horizon + 1)
     band = resid_std * np.sqrt(steps)
-    idx = _future_index(prices, horizon)  # prices (real dates) — unaffected by the reset above
+    idx = _future_index(prices, horizon, frequency)  # prices (real dates) — unaffected by the reset above
     return {
         "forecast": pd.Series(point_forecast.values, index=idx, name="ets"),
         "lower": pd.Series(point_forecast.values - 1.96 * band, index=idx),
@@ -115,7 +127,7 @@ def ets_forecast(prices: pd.Series, horizon: int) -> ForecastResult:
     }
 
 
-def theta_forecast(prices: pd.Series, horizon: int) -> ForecastResult:
+def theta_forecast(prices: pd.Series, horizon: int, *, frequency: str = "daily") -> ForecastResult:
     """
     The Theta method (Assimakopoulos & Nikolopoulos, 2000): decompose the
     series into a long-term linear trend and a short-term residual
@@ -138,7 +150,7 @@ def theta_forecast(prices: pd.Series, horizon: int) -> ForecastResult:
     performer in the original M3 competition despite that simplicity.
     """
     if len(prices) < MIN_HISTORY_POINTS_FOR_FORECAST:
-        return naive_forecast(prices, horizon)
+        return naive_forecast(prices, horizon, frequency=frequency)
 
     values = prices.to_numpy()
     n = len(values)
@@ -160,7 +172,7 @@ def theta_forecast(prices: pd.Series, horizon: int) -> ForecastResult:
         ses_fit = SimpleExpSmoothing(residuals, initialization_method="estimated").fit()
         residual_forecast = ses_fit.forecast(horizon)
     except Exception:
-        return naive_forecast(prices, horizon)
+        return naive_forecast(prices, horizon, frequency=frequency)
 
     point_forecast = trend_forecast + residual_forecast
 
@@ -170,7 +182,7 @@ def theta_forecast(prices: pd.Series, horizon: int) -> ForecastResult:
     steps = np.arange(1, horizon + 1)
     band = resid_std * np.sqrt(steps)
 
-    idx = _future_index(prices, horizon)
+    idx = _future_index(prices, horizon, frequency)
     return {
         "forecast": pd.Series(point_forecast, index=idx, name="theta"),
         "lower": pd.Series(point_forecast - 1.96 * band, index=idx),
@@ -178,14 +190,21 @@ def theta_forecast(prices: pd.Series, horizon: int) -> ForecastResult:
     }
 
 
-def arima_forecast(prices: pd.Series, horizon: int, max_p: int = 3, max_q: int = 3) -> ForecastResult:
+def arima_forecast(
+    prices: pd.Series,
+    horizon: int,
+    max_p: int = 3,
+    max_q: int = 3,
+    *,
+    frequency: str = "daily",
+) -> ForecastResult:
     """
     ARIMA(p,1,q) with a small AIC grid search. d=1 is fixed (first-differencing)
     since price levels are non-stationary by construction — searching d as well
     would mostly just re-discover d=1 at extra compute cost for no real benefit here.
     """
     if len(prices) < MIN_HISTORY_POINTS_FOR_FORECAST:
-        return naive_forecast(prices, horizon)
+        return naive_forecast(prices, horizon, frequency=frequency)
 
     # Same index-ambiguity fix as ets_forecast above — see that function's
     # comment for the full rationale. `prices` itself stays untouched below,
@@ -205,10 +224,10 @@ def arima_forecast(prices: pd.Series, horizon: int, max_p: int = 3, max_q: int =
                 continue  # non-convergent order — skip, don't crash the whole forecast
 
     if best_fit is None:
-        return naive_forecast(prices, horizon)
+        return naive_forecast(prices, horizon, frequency=frequency)
 
     result = best_fit.get_forecast(steps=horizon)
-    idx = _future_index(prices, horizon)
+    idx = _future_index(prices, horizon, frequency)
     conf_int = result.conf_int(alpha=0.05)
     return {
         "forecast": pd.Series(result.predicted_mean.values, index=idx, name="arima"),
@@ -217,7 +236,7 @@ def arima_forecast(prices: pd.Series, horizon: int, max_p: int = 3, max_q: int =
     }
 
 
-def _get_gradient_boosted_regressor(model_type: str, n_estimators: int) -> Any:    
+def _get_gradient_boosted_regressor(model_type: str, n_estimators: int) -> Any:
     """
     Pick the tree-ensemble regressor backend for `ml_regression_forecast`.
 
@@ -268,6 +287,7 @@ def _return_features(window: np.ndarray) -> list[float]:
 
 def ml_regression_forecast(
     prices: pd.Series, horizon: int, lookback: int = 10, n_estimators: int = 200, model_type: str = "auto",
+    *, frequency: str = "daily",
 ) -> ForecastResult:
     """
     Gradient-boosted (or bagged, via `model_type="random_forest"`) tree
@@ -292,12 +312,12 @@ def ml_regression_forecast(
     same fails-soft contract as every other model in this module.
     """
     if len(prices) < MIN_HISTORY_POINTS_FOR_FORECAST:
-        return naive_forecast(prices, horizon)
+        return naive_forecast(prices, horizon, frequency=frequency)
 
     returns = prices.pct_change().dropna().to_numpy()
     n_rows = len(returns) - lookback
     if n_rows < 20:  # not enough windows to train a meaningful model
-        return naive_forecast(prices, horizon)
+        return naive_forecast(prices, horizon, frequency=frequency)
 
     X = np.array([_return_features(returns[i:i + lookback]) for i in range(n_rows)])
     y = returns[lookback:]
@@ -307,7 +327,7 @@ def ml_regression_forecast(
         model.fit(X, y)
         in_sample_pred = model.predict(X)
     except Exception:
-        return naive_forecast(prices, horizon)
+        return naive_forecast(prices, horizon, frequency=frequency)
 
     # Recursive multi-step forecast: predict one return, append it to the
     # rolling window, predict the next.
@@ -320,7 +340,7 @@ def ml_regression_forecast(
             predicted_returns.append(next_return)
             window.append(next_return)
     except Exception:
-        return naive_forecast(prices, horizon)
+        return naive_forecast(prices, horizon, frequency=frequency)
 
     last_price = float(prices.iloc[-1])
     point_forecast = last_price * np.cumprod(1.0 + np.array(predicted_returns))
@@ -335,7 +355,7 @@ def ml_regression_forecast(
     steps = np.arange(1, horizon + 1)
     band = point_forecast * resid_std * np.sqrt(steps)
 
-    idx = _future_index(prices, horizon)
+    idx = _future_index(prices, horizon, frequency)
     return {
         "forecast": pd.Series(point_forecast, index=idx, name="ml_regression"),
         "lower": pd.Series(point_forecast - 1.96 * band, index=idx),
@@ -345,6 +365,7 @@ def ml_regression_forecast(
 
 def lstm_forecast(
     prices: pd.Series, horizon: int, lookback: int = 20, epochs: int = 50, hidden_size: int = 32,
+    *, frequency: str = "daily",
 ) -> ForecastResult:
     """
     A small univariate LSTM (Long Short-Term Memory recurrent neural network),
@@ -394,14 +415,14 @@ def lstm_forecast(
     philosophy as ARIMA's grid search and GARCH's convergence check).
     """
     if len(prices) < MIN_HISTORY_POINTS_FOR_LSTM:
-        return naive_forecast(prices, horizon)
+        return naive_forecast(prices, horizon, frequency=frequency)
 
     import torch  # imported lazily — optional, heavy dependency, only needed for this one model
     from torch import nn
 
     returns = prices.pct_change().dropna().values.astype("float32")
     if len(returns) < lookback + 10:  # not enough sliding windows to train on meaningfully
-        return naive_forecast(prices, horizon)
+        return naive_forecast(prices, horizon, frequency=frequency)
 
     # Scale returns to roughly unit variance — neural nets train more reliably
     # on inputs of a sane magnitude than on raw daily returns (typically ~0.01).
@@ -421,9 +442,8 @@ def lstm_forecast(
 
         def forward(self, x: "torch.Tensor") -> "torch.Tensor":
             out, _ = self.lstm(x)
-            # torch's own type stubs return Any here — same reasoning as the explicit
-            # float(...)/str(...) wraps elsewhere in this codebase (metrics.py,
-            # llm_client.py) for library calls whose stubs don't narrow past Any.
+            # torch's own type stubs return Any here — explicit cast to keep
+            # this module's return types precise for mypy --strict.
             return cast("torch.Tensor", self.head(out[:, -1, :]))  # last timestep -> one-step-ahead prediction
 
     try:
@@ -442,11 +462,11 @@ def lstm_forecast(
             prediction = model(X)
             loss = loss_fn(prediction, y)
             if not torch.isfinite(loss):
-                return naive_forecast(prices, horizon)  # diverged — don't trust this fit
+                return naive_forecast(prices, horizon, frequency=frequency)  # diverged — don't trust this fit
             loss.backward()
             optimizer.step()
     except Exception:
-        return naive_forecast(prices, horizon)  # any training failure — same "skip, don't crash" as ARIMA
+        return naive_forecast(prices, horizon, frequency=frequency)  # any training failure — same "skip, don't crash" as ARIMA
 
     model.eval()
     window = scaled.tolist()
@@ -476,7 +496,7 @@ def lstm_forecast(
     # in price space instead of directly to price differences.
     band = point_forecast * resid_std * np.sqrt(steps)
 
-    idx = _future_index(prices, horizon)
+    idx = _future_index(prices, horizon, frequency)
     return {
         "forecast": pd.Series(point_forecast, index=idx, name="lstm"),
         "lower": pd.Series(point_forecast - 1.96 * band, index=idx),
@@ -498,29 +518,30 @@ def forecast_all_assets(
     prices: pd.DataFrame,
     horizon: int,
     model_name: str = "ETS (Holt linear trend)",
+    frequency: str = "daily",
 ) -> pd.DataFrame:
     """
     Run the chosen model independently per asset (no cross-asset correlation in
     the forecast itself — that's handled downstream by the covariance matrix used
     in optimization) and return a single DataFrame of forecasted prices.
 
-    PARALLELIZED across tickers with a thread pool — this was the
-    single biggest speed bottleneck flagged in the README ("ARIMA across many
-    windows/assets is noticeably slower"), and it compounds badly because this
-    exact function is also called once PER walk-forward window. Threads, not
-    processes: ARIMA/ETS fitting is dominated by numpy/scipy linear algebra,
-    which releases the GIL during BLAS calls, so threads give a real wall-clock
-    speedup here without the pickling and Streamlit-context fragility that
-    spinning subprocesses from inside a Streamlit callback would introduce.
-    `max_workers` is capped at 8 to avoid oversubscribing a small container
-    (e.g. Render's free tier) when a large universe is selected.
+    PARALLELIZED across tickers with a thread pool — this matters because ARIMA
+    across many windows/assets is noticeably slower otherwise, and it compounds
+    badly because this exact function is also called once PER walk-forward
+    window. Threads, not processes: ARIMA/ETS fitting is dominated by
+    numpy/scipy linear algebra, which releases the GIL during BLAS calls, so
+    threads give a real wall-clock speedup here without the pickling and
+    Streamlit-context fragility that spinning subprocesses from inside a
+    Streamlit callback would introduce. `max_workers` is capped at 8 to avoid
+    oversubscribing a small container (e.g. Render's free tier) when a large
+    universe is selected.
     """
     model_fn = FORECAST_MODELS[model_name]
     tickers = list(prices.columns)
 
     def _forecast_one(ticker: str) -> pd.Series:
         series = prices[ticker].dropna()
-        return model_fn(series, horizon)["forecast"]
+        return model_fn(series, horizon, frequency=frequency)["forecast"]
 
     max_workers = min(8, len(tickers)) or 1
     forecasts: dict[str, pd.Series] = {}

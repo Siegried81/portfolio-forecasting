@@ -46,10 +46,9 @@ from pypfopt import risk_models
 
 from src.config import MIN_HISTORY_POINTS_FOR_GARCH, TRADING_DAYS_PER_YEAR
 
-warnings.filterwarnings("ignore", module="arch")  # same convergence-warning noise
-# pattern already suppressed for statsmodels in forecasting.py — a non-converged
-# GARCH fit is already handled explicitly below (falls back to historical
-# variance), so the warning itself would just be noise on top of that.
+warnings.filterwarnings("ignore", module="arch")  # a non-converged GARCH fit is
+# already handled explicitly below (falls back to historical variance), so the
+# convergence warning itself would just be noise on top of that.
 
 
 def garch_forecast_variance(returns: pd.Series, horizon_periods: int) -> float | None:

@@ -22,8 +22,8 @@ different behaviour, not just a different base_url) and so is Ollama (a
 different endpoint shape: `/api/chat`, not `/chat/completions`, and a
 different response envelope).
 
-Why more than one hosted fallback tier at all: Ollama alone left a real gap —
-it only runs on whatever machine has it installed, a genuine fallback in
+Why more than one hosted fallback tier at all: Ollama alone leaves a real gap
+— it only runs on whatever machine has it installed, a genuine fallback in
 local dev but silently unreachable once this app is deployed (Render,
 Streamlit Community Cloud have no Ollama daemon in the container). The three
 hosted fallbacks are also genuine redundancy against EACH OTHER, not just
@@ -80,11 +80,11 @@ def truncate_to_token_budget(text: str, max_tokens: int = MAX_CONTEXT_TOKENS) ->
     The truncation path uses the SAME char-count fallback as `_count_tokens`
     (~4 chars/token) if `tiktoken.get_encoding()` can't be reached — e.g. an
     offline dev box or a restricted container network policy blocking the
-    encoding download. Without this, a blocked download would raise straight
-    through as an uncaught HTTPError instead of degrading, breaking this
-    module's own documented "fails soft" contract: a network hiccup here
-    should never crash a feature that's meant to be enrichment, not core to
-    the app.
+    encoding download. Every internal call to `tiktoken.get_encoding()` in
+    this function is guarded the same way, so a blocked download degrades
+    gracefully rather than raising an uncaught error through a function this
+    module documents as "fails soft": a network hiccup here should never
+    crash a feature that's meant to be enrichment, not core to the app.
     """
     if _count_tokens(text) <= max_tokens:
         return text

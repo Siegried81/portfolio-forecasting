@@ -1,14 +1,4 @@
-"""
-Unit tests for src/ai_features.py. Had NO test coverage before this pass.
-
-Priority: `build_results_context` — the pure text-formatting function that is
-the SAME grounding context fed to both the commentary generator and the
-chatbot (per its own docstring, "one source of truth"). A formatting bug here
-silently propagates into every LLM feature at once, so it's worth testing on
-its own rather than only indirectly via a mocked chat() call. The LLM-calling
-functions themselves are tested by mocking src.llm_client.chat — never a real
-network call.
-"""
+"""Unit tests for src/ai_features.py. LLM-calling functions mock src.llm_client.chat."""
 import pandas as pd
 import pytest
 
@@ -26,7 +16,7 @@ def _metrics(**overrides) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# build_results_context — pure formatting, shared by every LLM feature
+# build_results_context
 # ---------------------------------------------------------------------------
 
 def test_build_results_context_includes_only_nonzero_weights():
@@ -34,14 +24,10 @@ def test_build_results_context_includes_only_nonzero_weights():
     context = build_results_context(weights, _metrics(), None, None)
     assert "AAPL: 60.0%" in context
     assert "TSLA: 40.0%" in context
-    assert "MSFT" not in context  # below the 0.1% display threshold
+    assert "MSFT" not in context
 
 
 def test_build_results_context_includes_short_positions():
-    # BUGFIX regression: `w > 0.001` used to silently drop every SHORT
-    # (negative) weight when short selling is enabled, making the LLM
-    # describe a short-selling portfolio as if it held fewer assets than
-    # it actually does. Must show negative weights, not omit them.
     weights = pd.Series({"AAPL": 0.60, "TSLA": -0.20, "MSFT": 0.60})
     context = build_results_context(weights, _metrics(), None, None)
     assert "TSLA: -20.0%" in context
@@ -87,9 +73,6 @@ def test_build_results_context_flags_sahm_rule_recession_signal():
 
 def test_build_results_context_omits_macro_section_when_nothing_came_back():
     weights = pd.Series({"AAPL": 1.0})
-    # Every macro field None -> the block should never be appended (an empty
-    # "MACRO & RISK BACKDROP" header with nothing under it would read as a
-    # bug, not an absence of data).
     macro_context = {"macro": {}, "vix_level": None}
     context = build_results_context(weights, _metrics(), None, None, macro_context)
     assert "MACRO & RISK BACKDROP" not in context
@@ -104,7 +87,7 @@ def test_build_results_context_classifies_vix_regime():
 
 
 # ---------------------------------------------------------------------------
-# generate_commentary — mocked chat(), never a real network call
+# generate_commentary
 # ---------------------------------------------------------------------------
 
 def test_generate_commentary_passes_context_through_to_chat(monkeypatch):
@@ -123,7 +106,7 @@ def test_generate_commentary_passes_context_through_to_chat(monkeypatch):
     assert captured["messages"][0]["role"] == "system"
 
 # ---------------------------------------------------------------------------
-# answer_portfolio_question -- academic-literature grounding (2026-09-08)
+# answer_portfolio_question -- academic-literature grounding
 # ---------------------------------------------------------------------------
 
 def test_answer_portfolio_question_includes_academic_papers_for_a_methodology_question(monkeypatch):
@@ -163,13 +146,11 @@ def test_answer_portfolio_question_skips_academic_search_for_unrelated_question(
     monkeypatch.setattr(ai_features, "chat", _fake_chat)
     monkeypatch.setattr("src.academic_search.search_academic_papers", _fail_if_called)
 
-    # Must not raise (confirms search_academic_papers is never invoked below)
     answer_portfolio_question("what is my portfolio's current return?", "some results context", [])
 
 
 # ---------------------------------------------------------------------------
-# Prompt-structure improvements (2026-09-08): XML tags around injected data,
-# explicit output-format instruction, few-shot example in SYSTEM_PERSONA
+# Prompt-structure: XML tags, output format, few-shot example
 # ---------------------------------------------------------------------------
 
 def test_wrap_context_produces_a_named_xml_tag():
@@ -208,9 +189,6 @@ def test_generate_commentary_specifies_prose_format_not_bullets(monkeypatch):
 
 
 def test_system_persona_includes_a_good_and_bad_annualisation_example():
-    # Regression test for the few-shot addition: the rule must not be prose-only
-    # any more — a concrete GOOD/BAD pair reinforces it far more reliably across
-    # the 5 different LLM providers this app can now route to.
     assert "GOOD:" in ai_features.SYSTEM_PERSONA
     assert "BAD (never write this):" in ai_features.SYSTEM_PERSONA
 

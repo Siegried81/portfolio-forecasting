@@ -30,21 +30,20 @@ that context small and canonical, instead of scattering constants across the cod
 is what makes "give the assistant the right context" actually tractable.
 
 **3. A real feedback loop**
-`pytest` (300+ tests, `.github/workflows/ci.yml` running it on every push) plus
+`pytest` (367 tests across 19 files, `.github/workflows/ci.yml` running it on every push) plus
 `mypy --strict` (blocking — the full suite passes clean) are the loop that turns "looks
 right" into "is right." Nearly every fix in this project's history was caught *because*
-a test (or, for the one case in this project's own history, mypy itself — a missing
-return-type annotation in `src/forecasting.py`) failed, not because a human read the
-diff carefully enough to notice — see the recurring-errors log below for concrete
-examples from this exact repo.
+a test — or, for one entry in this project's own log below, mypy itself — failed, not
+because a human read the diff carefully enough to notice.
 
 **4. Explicit guardrails — what NOT to do**
 Documented directly in code comments and the README's "Key design decisions" table,
-not left implicit: don't use Kats (unmaintained since 2022), don't assume Twelve Data's
-free tier covers `/statistics` for arbitrary tickers, don't divide every FRED series by
-100 (`SAHMREALTIME` isn't a percentage-of-100 figure — see the recurring-errors log),
-don't let a single Groq key failure abandon the other four. Each is a mistake that was
-actually made once during development and then turned into a permanent constraint.
+not left implicit: don't use Kats (chosen against for compatibility with modern pandas/numpy, not because it's
+abandoned — its repo shows ongoing commits), don't assume Twelve Data's free tier covers
+`/statistics` for arbitrary tickers, don't divide every FRED series by 100 (`SAHMREALTIME`
+isn't a percentage-of-100 figure — see the recurring-errors log), don't let a single Groq
+key failure abandon the other four, don't send an LLM prompt's full context unbounded (see
+the recurring-errors log). Each is a mistake that was actually made once during development and then turned into a permanent constraint.
 
 **5. Test-driven prompting**
 For every new metric added this session (Jensen's Alpha, Ulcer Index, skewness/kurtosis,
@@ -73,11 +72,13 @@ doesn't rediscover the same failure mode from scratch.
 | 10 | A first implementation of the Theta forecasting method silently under-forecast any real trend — a pure linear-trend test case came back roughly half the true slope | Applied SES (Simple Exponential Smoothing, which has no trend term) directly to an amplified "theta line" derived from the raw series, instead of detrending first — SES has no way to extrapolate a slope it was never shown | Verify a new forecasting/statistical formula against a case with a KNOWN correct answer (here: a noiseless linear trend, where the right forecast is exactly computable by hand) before trusting it, not just checking it runs and produces plausible-looking numbers |
 | 11 | `efficient_frontier_points` crashed with `OptimizationError: Solver status: infeasible` the moment a single ticker was selected | The function always swept a RANGE of target returns to sample the frontier — with one asset, weight is forced to 100% and there is exactly one achievable return, so every other target in the sweep is mathematically infeasible by construction, not a solver problem | Any function that sweeps a range of targets over an optimizer needs an explicit degenerate-input check (here: `len(mu) < 2` or no spread between min/max achievable return) before the sweep, not just a try/except around each point |
 | 12 | Every ticker's news sentiment read "Neutral (score +0.00)" after migrating FinBERT off the deprecated `api-inference.huggingface.co` domain | The new `router.huggingface.co/hf-inference` endpoint wraps a single-input result in an extra list layer (`[[{"label": ..., "score": ...}, ...]]`) instead of the old flat shape (`[{"label": ..., "score": ...}, ...]`) — `isinstance(item, dict)` silently filtered out every element (each one a list, not a dict), leaving positive=negative=0.0 with no exception anywhere | Any response-shape assumption from a migrated/renamed API endpoint gets re-verified against a live capture, not assumed unchanged just because the request shape and status code still work — `fetch_finbert_sentiment` now unwraps one extra list layer when present, with a regression test covering both the old flat shape and the new nested one |
+| 13 | `mypy --strict` failed on `src/forecasting.py` the first time it was actually run against this exact codebase | `_get_gradient_boosted_regressor` returns one of two unrelated external classes (XGBoost's or scikit-learn's regressor) with no return-type annotation at all | Any helper returning a third-party type this module doesn't want to import at type-check time gets an explicit `-> Any` rather than an unannotated signature — silent under `--ignore-missing-imports` alone, but not under `--strict` |
+| 14 | Chatbot crashed the entire LLM fallback cascade (Groq → OpenRouter → Cerebras → SambaNova → Ollama, all failing at once) | `answer_portfolio_question`'s system prompt (persona + portfolio data + retrieved news + academic references) was never token-bounded — only the news-digest block was; a long-enough context (9098 tokens) exceeded Groq's 8000 TPM limit, and the resulting 413 wasn't a Groq-specific outage, so every fallback failed identically | Apply `truncate_to_token_budget` to the full assembled `system_content`, not just individual data blocks, before every `chat()` call |
 
 ## What this gets me, concretely
 
-- **For this bootcamp project**: every fix above shipped with a regression test, so none
-  of these eight mistakes can silently come back.
+- **For this bootcamp project**: every fix above shipped with a regression test (or, for #13,
+  a passing `mypy --strict` run), so none of these thirteen mistakes can silently come back.
 - **For an interview**: "I use AI to write code" is table stakes. "Here's my
   recurring-errors log with the actual root causes, and here's why my test suite is
   built to catch each one again" is a materially different, harder-to-fake claim — and
