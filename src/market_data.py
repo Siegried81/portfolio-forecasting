@@ -185,10 +185,11 @@ def _download_yahoo_direct(tickers: list[str], start: dt.date, end: dt.date) -> 
 
     columns = {}
     for ticker in tickers:
+        params: dict[str, Any] = {"period1": period1, "period2": period2, "interval": "1d", "events": "div,splits"}
         try:
             response = requests.get(
                 YAHOO_CHART_URL.format(ticker=ticker),
-                params={"period1": period1, "period2": period2, "interval": "1d", "events": "div,splits"},
+                params=params,
                 headers=headers, timeout=10,
             )
             response.raise_for_status()
