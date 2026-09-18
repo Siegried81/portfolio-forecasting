@@ -131,7 +131,7 @@ def _search_semantic_scholar(query: str, limit: int) -> list[dict[str, Any]]:
     has direct, isolated test coverage.
     """
     headers = {"x-api-key": LLM_SETTINGS.semantic_scholar_api_key} if LLM_SETTINGS.semantic_scholar_api_key else {}
-    params = {"query": query, "limit": limit, "fields": SEMANTIC_SCHOLAR_FIELDS}
+    params: dict[str, Any] = {"query": query, "limit": limit, "fields": SEMANTIC_SCHOLAR_FIELDS}
 
     try:
         response = requests.get(SEMANTIC_SCHOLAR_SEARCH_URL, params=params, headers=headers, timeout=10)
@@ -186,7 +186,7 @@ def search_arxiv_papers(query: str, limit: int = 3) -> list[dict[str, Any]]:
     rather than adding a dependency for it. [] on any failure (network,
     malformed XML) or if nothing matched, never raises.
     """
-    params = {"search_query": f"all:{query}", "start": 0, "max_results": limit}
+    params: dict[str, Any] = {"search_query": f"all:{query}", "start": 0, "max_results": limit}
     try:
         response = requests.get(ARXIV_API_URL, params=params, timeout=10)
         response.raise_for_status()

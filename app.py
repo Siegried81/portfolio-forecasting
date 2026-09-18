@@ -1309,6 +1309,17 @@ def render_ai_analyst_tab(
     st.session_state.setdefault("results_context", results_context)
     st.session_state["results_context"] = results_context  # always keep the latest run's numbers
 
+    # Streamlit state is ephemeral (nothing survives a refresh or a new session), so a run's
+    # numbers are otherwise gone the moment the tab is closed. This reuses the exact same
+    # results_context string already built for the LLM above — one source of truth, no LLM
+    # or API key required, so it works even with zero keys configured.
+    st.download_button(
+        "Download run summary (.md)",
+        f"# Portfolio Forecasting — Run Summary\n\nGenerated {dt.datetime.now():%Y-%m-%d %H:%M}\n\n{results_context}\n",
+        file_name=f"portfolio_run_{dt.datetime.now():%Y%m%d_%H%M}.md",
+        mime="text/markdown",
+    )
+
     col_commentary, col_news = st.columns(2)
 
     with col_commentary:
