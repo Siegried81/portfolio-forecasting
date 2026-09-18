@@ -76,7 +76,7 @@ def fetch_ticker_headlines(ticker: str, company_name: str | None = None, max_art
 
     query = company_name or ticker
     since = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=NEWS_LOOKBACK_DAYS)).strftime("%Y-%m-%d")
-    params = {
+    params: dict[str, Any] = {
         "q": query, "from": since, "sortBy": "relevancy", "language": "en",
         "pageSize": max_articles, "apiKey": LLM_SETTINGS.newsapi_key,
     }
@@ -166,7 +166,7 @@ def fetch_gdelt_news(ticker: str, company_name: str | None = None, max_articles:
     parser is exhaustive.
     """
     query = f'"{company_name or ticker}" sourcelang:english'
-    params = {
+    params: dict[str, Any] = {
         "query": query, "mode": "artlist", "format": "json",
         "maxrecords": max_articles, "sort": "DateDesc",
         "timespan": f"{NEWS_LOOKBACK_DAYS}d",
@@ -300,7 +300,7 @@ def fetch_ted_notices(ticker: str, company_name: str | None = None, max_notices:
     inspect the raw JSON directly before assuming this parser is exhaustive.
     """
     query = f'FT~"{company_name or ticker}"'
-    body = {
+    body: dict[str, Any] = {
         "query": query,
         "fields": [
             "publication-number", "notice-title", "buyer-name",
