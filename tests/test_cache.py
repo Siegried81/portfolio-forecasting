@@ -187,3 +187,73 @@ def test_cached_caches_non_serialisable_results_in_process(monkeypatch):
     # from the in-process cache instead of recomputing.
     assert call_count["n"] == 2
     assert len(fake_client.store) == 0
+
+
+# ---------------------------------------------------------------------------
+# Failed results expire after FAILURE_TTL_SECONDS, not the full TTL
+# ---------------------------------------------------------------------------
+
+def _clock(monkeypatch, start: float = 1_000_000.0):
+    now = {"t": start}
+    monkeypatch.setattr(cache_module.time, "time", lambda: now["t"])
+    return now
+
+
+def test_cached_retries_a_failed_result_after_the_failure_ttl(monkeypatch):
+    monkeypatch.setattr(cache_module, "REDIS_URL", None)
+    st.cache_data.clear()
+    now = _clock(monkeypatch)
+    answers = iter([None, {"rate": 0.04}])
+    calls = {"n": 0}
+
+    @cached(ttl_seconds=6 * 3600)
+    def fetch() -> dict | None:
+        calls["n"] += 1
+        return next(answers)
+
+    assert fetch() is None
+    now["t"] += cache_module.FAILURE_TTL_SECONDS - 1
+    assert fetch() is None and calls["n"] == 1  # still inside the failure window: no new call
+    now["t"] += 2
+    assert fetch() == {"rate": 0.04} and calls["n"] == 2
+
+
+def test_cached_keeps_a_successful_result_for_the_full_ttl(monkeypatch):
+    monkeypatch.setattr(cache_module, "REDIS_URL", None)
+    st.cache_data.clear()
+    now = _clock(monkeypatch)
+    calls = {"n": 0}
+
+    @cached(ttl_seconds=6 * 3600)
+    def fetch() -> dict:
+        calls["n"] += 1
+        return {"rate": 0.04}
+
+    fetch()
+    now["t"] += cache_module.FAILURE_TTL_SECONDS * 10
+    fetch()
+    assert calls["n"] == 1
+
+
+@pytest.mark.parametrize("result, failed", [
+    (None, True), ([], True), ({}, True), ({"a": None, "b": None}, True),
+    ({"a": None, "b": 1.0}, False), ([{"title": "x"}], False), (0.0, False),
+])
+def test_looks_failed(result, failed):
+    assert cache_module._looks_failed(result) is failed
+
+
+def test_cached_stores_a_failed_result_in_redis_with_the_short_ttl(monkeypatch):
+    client = _FakeRedisClient()
+    ttls = {}
+    client.setex = lambda key, ttl, value: ttls.setdefault(key, ttl)
+    monkeypatch.setattr(cache_module, "REDIS_URL", "redis://fake:6379/0")
+    monkeypatch.setattr(cache_module, "_get_redis_client", lambda: client)
+
+    @cached(ttl_seconds=6 * 3600)
+    def fetch(ok: bool) -> list:
+        return ["item"] if ok else []
+
+    fetch(True)
+    fetch(False)
+    assert sorted(ttls.values()) == [cache_module.FAILURE_TTL_SECONDS, 6 * 3600]

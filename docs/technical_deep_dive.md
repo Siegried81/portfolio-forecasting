@@ -496,7 +496,11 @@ stays consistent.
 rebalance)", default 10 bps. Charged as `turnover × cost rate` at every point a portfolio
 actually rebalances: once for the initial trade in the single-window comparison, and at every
 walk-forward window boundary — tracked independently per portfolio type against ITS OWN previous
-weights, not a shared reference. "Rebalancing frequency" surfaces through the existing forecast
+weights, not a shared reference. Between rebalances each portfolio is bought and held, so its
+weights drift with prices (`buy_and_hold_returns()`), and the next rebalance is charged on the
+move from those drifted weights to the new targets: the returns and the costs describe the same
+once-per-window strategy, rather than returns that silently assume a rebalance every period while
+only the window boundary is charged. "Rebalancing frequency" surfaces through the existing forecast
 horizon control rather than a separate parameter: a shorter horizon means more walk-forward
 windows over the same history, i.e. more frequent rebalancing, i.e. more cumulative cost drag —
 shortening the horizon is how to see this effect directly. Set the cost to 0 for the frictionless

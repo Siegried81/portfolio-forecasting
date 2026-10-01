@@ -389,9 +389,10 @@ def _fetch_cik_for_ticker(ticker: str) -> str | None:
     same User-Agent requirement as full-text search below, no extra rate
     limit). Returns the CIK as a plain (non-zero-padded) numeric string, or
     None if the ticker isn't in SEC's list (not a US-listed filer, e.g. an
-    ETF or FX proxy) or the fetch itself fails — callers must fall back to
-    unfiltered behaviour on None, never raise, same fails-soft contract as
-    every other fetcher in this module.
+    ETF or FX proxy) or the fetch itself fails — never raises, same
+    fails-soft contract as every other fetcher in this module. Either way
+    `fetch_sec_filings` then returns no filings: without a verified CIK it
+    cannot tell this company's filings from another one sharing its name.
 
     A bare company-name text search (`q='"{company_name}"'`) also matches
     UNRELATED companies whose name happens to contain the same word (e.g.
@@ -456,10 +457,11 @@ def fetch_sec_filings(company_name: str, ticker: str, max_filings: int = 3, form
     as Apple Inc.). Results are filtered down to hits whose own `ciks`
     field contains `ticker`'s actual CIK (via `_fetch_cik_for_ticker`) before
     being returned — and deduplicated by accession number, since the same
-    filing can otherwise appear more than once within `max_filings`. If the
-    CIK lookup itself fails (network issue), filtering is skipped entirely —
-    this must never return FEWER results than an unfiltered search would,
-    only more accurate ones when the lookup succeeds.
+    filing can otherwise appear more than once within `max_filings`. When no
+    CIK is available (a ticker SEC does not list, e.g. MC.PA or an ETF, or a
+    failed lookup) it returns [] without searching: an unfiltered name search
+    labelled other companies' 8-Ks and Form 4s with this ticker, and fewer
+    filings is better than wrongly attributed ones.
 
     Returns [] on any failure. Field-shape caveat, same spirit as the Twelve
     Data fundamentals parser: EDGAR's full-text search response shape was
@@ -468,6 +470,10 @@ def fetch_sec_filings(company_name: str, ticker: str, max_filings: int = 3, form
     — if results look wrong, inspect the raw JSON directly before assuming the
     parser is exhaustive.
     """
+    target_cik = _fetch_cik_for_ticker(ticker)
+    if target_cik is None:
+        return []
+
     params = {"q": f'"{company_name}"', "forms": form_type, "dateRange": "custom",
               "startdt": (dt.date.today() - dt.timedelta(days=30)).isoformat(),
               "enddt": dt.date.today().isoformat()}
@@ -482,10 +488,7 @@ def fetch_sec_filings(company_name: str, ticker: str, max_filings: int = 3, form
         return []
 
     hits = (payload.get("hits") or {}).get("hits") or []
-
-    target_cik = _fetch_cik_for_ticker(ticker)
-    if target_cik is not None:
-        hits = [h for h in hits if target_cik in _hit_ciks(h)]
+    hits = [h for h in hits if target_cik in _hit_ciks(h)]
 
     results: list[dict[str, Any]] = []
     seen_accessions: set[str] = set()
