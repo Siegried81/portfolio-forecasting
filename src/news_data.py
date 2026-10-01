@@ -28,8 +28,10 @@ provider's coverage and rate limits:
    the same "primary source, not journalism" distinction SEC EDGAR earns
    among the news aggregators.
 
-Kept deliberately dumb (no sentiment scoring here): the LLM does the qualitative
-read in `ai_features.py`. Every fetch function fails SOFTLY - a missing/expired
+The fetchers are kept deliberately dumb: the LLM does the qualitative read in
+`ai_features.py`. The only scoring here is the per-ticker sentiment cascade
+at the bottom of this module (FinBERT -> Finnhub -> VADER, see
+`get_ticker_sentiment`). Every fetch function fails SOFTLY - a missing/expired
 key or a down provider must never crash the app, since this is enrichment, not
 core to the portfolio maths. `generate_news_digest` in ai_features.py merges
 whatever came back from however many of the six sources succeeded.
@@ -37,6 +39,7 @@ whatever came back from however many of the six sources succeeded.
 from __future__ import annotations
 
 import datetime as dt
+import email.utils
 import logging
 import xml.etree.ElementTree as ET
 from typing import Any
@@ -133,7 +136,14 @@ def fetch_finnhub_news(ticker: str, max_articles: int = 5) -> list[dict[str, Any
             "title": a.get("headline", ""),
             "description": a.get("summary", "") or "",
             "source": a.get("source", "unknown"),
-            "published_at": dt.datetime.fromtimestamp(a["datetime"]).isoformat() if a.get("datetime") else "",
+            # Finnhub's `datetime` is a UNIX epoch (UTC). Converted explicitly in
+            # UTC: a bare fromtimestamp() would render it in the server's local
+            # time with no offset marker, shifting it relative to every other
+            # provider's UTC timestamps.
+            "published_at": (
+                dt.datetime.fromtimestamp(a["datetime"], tz=dt.timezone.utc).isoformat()
+                if a.get("datetime") else ""
+            ),
             "url": a.get("url", ""),
             "provider": "Finnhub",
         }
@@ -186,12 +196,16 @@ def fetch_gdelt_news(ticker: str, company_name: str | None = None, max_articles:
         if not title:
             continue  # a malformed/empty entry — skip rather than show a blank headline
         # GDELT's "seendate" is a compact "20260908T120000Z" timestamp, not ISO —
-        # reformatted to the same ISO shape every other provider here uses.
+        # reformatted to an ISO string with an explicit UTC offset, the same
+        # shape the Finnhub and Google News parsers produce.
         published_at = ""
         raw_date = a.get("seendate", "")
         if raw_date:
             try:
-                published_at = dt.datetime.strptime(raw_date, "%Y%m%dT%H%M%SZ").isoformat()
+                published_at = (
+                    dt.datetime.strptime(raw_date, "%Y%m%dT%H%M%SZ")
+                    .replace(tzinfo=dt.timezone.utc).isoformat()
+                )
             except ValueError:
                 published_at = ""
         results.append({
@@ -203,6 +217,25 @@ def fetch_gdelt_news(ticker: str, company_name: str | None = None, max_articles:
             "provider": "GDELT",
         })
     return results
+
+
+def _rfc822_to_iso_utc(raw_date: str) -> str:
+    """
+    Convert an RSS `pubDate` (RFC 822, e.g. "Tue, 08 Sep 2026 12:00:00 GMT")
+    to an ISO 8601 string in UTC, so Google News dates read the same way as
+    the ISO timestamps every other provider here returns. An unparsable or
+    empty value is returned unchanged rather than dropped — the raw date is
+    still more useful to a reader than no date at all.
+    """
+    if not raw_date:
+        return ""
+    try:
+        parsed = email.utils.parsedate_to_datetime(raw_date)
+    except (TypeError, ValueError, IndexError):
+        return raw_date
+    if parsed.tzinfo is None:  # RFC 822 "-0000" means UTC with unknown local offset
+        parsed = parsed.replace(tzinfo=dt.timezone.utc)
+    return parsed.astimezone(dt.timezone.utc).isoformat()
 
 
 @cached(ttl_seconds=1800)
@@ -248,7 +281,7 @@ def fetch_google_news_rss(ticker: str, company_name: str | None = None, max_arti
             "title": title,
             "description": (item.findtext("description") or "").strip(),
             "source": (source_el.text or "unknown").strip() if source_el is not None else "unknown",
-            "published_at": (item.findtext("pubDate") or "").strip(),
+            "published_at": _rfc822_to_iso_utc((item.findtext("pubDate") or "").strip()),
             "url": (item.findtext("link") or "").strip(),
             "provider": "Google News",
         })
@@ -268,11 +301,19 @@ def _ted_field_text(value: Any) -> str:
     live query in this sandboxed environment (network access here is
     restricted to package registries), so staying defensive here matters
     more than for a shape that's already been confirmed live.
+
+    Fields that can hold several values (e.g. `buyer-name` as
+    {"deu": ["Stadt München"]}, `buyer-country` as ["DEU"]) come back as
+    lists, either directly or inside the language-keyed dict. Lists are
+    joined with ", " so they render as plain text instead of a Python list
+    repr like "['Stadt München']".
     """
     if isinstance(value, str):
         return value
+    if isinstance(value, list):
+        return ", ".join(text for text in (_ted_field_text(v) for v in value) if text)
     if isinstance(value, dict):
-        return str(value.get("eng") or next(iter(value.values()), ""))
+        return _ted_field_text(value.get("eng") or next(iter(value.values()), ""))
     return ""
 
 
@@ -328,7 +369,7 @@ def fetch_ted_notices(ticker: str, company_name: str | None = None, max_notices:
         publication_number = notice.get("publication-number", "")
         results.append({
             "title": title,
-            "description": f"Buyer: {buyer} ({country})" if buyer else "",
+            "description": (f"Buyer: {buyer} ({country})" if country else f"Buyer: {buyer}") if buyer else "",
             "source": "TED (EU public procurement)",
             "published_at": notice.get("publication-date", ""),
             "url": (
@@ -471,7 +512,9 @@ def fetch_sec_filings(company_name: str, ticker: str, max_filings: int = 3, form
         else:
             url = "https://www.sec.gov/edgar/search/"
         results.append({
-            "title": f"{form_type} filing: {source.get('display_names', [company_name])[0]}",
+            # `or` (not a .get default): an EMPTY display_names list must also fall
+            # back to company_name instead of raising IndexError on [0].
+            "title": f"{form_type} filing: {(source.get('display_names') or [company_name])[0]}",
             "description": f"Filed {source.get('file_date', 'unknown date')}",
             "source": "SEC EDGAR",
             "published_at": source.get("file_date", ""),
@@ -555,9 +598,16 @@ def fetch_finnhub_sentiment(ticker: str) -> dict[str, Any] | None:
     """
     Finnhub's own aggregated news-sentiment endpoint: bullish/bearish % across
     a wider article set than the ~5 headlines this app fetches per ticker, plus
-    a weekly article-volume ("buzz") figure. Tried FIRST because it's a genuine
-    independent aggregation, not a second opinion computed from the same small
-    sample already on screen.
+    a weekly article-volume ("buzz") figure. Second tier of
+    `get_ticker_sentiment`'s cascade (after FinBERT, before VADER): it's a
+    genuine independent aggregation, not a second opinion computed from the
+    same small sample already on screen.
+
+    For a ticker it has no coverage for, Finnhub answers 200 with a ZEROED
+    shape (bullishPercent == bearishPercent == 0) rather than an error. That
+    is treated as "no data" (None), not as a neutral 0.0 score: on covered
+    tickers the two percentages sum to 1, so 0/0 can only mean "nothing
+    scored", and reporting it as neutral would be a claim, not an absence.
 
     Note: this endpoint is plan-restricted on some Finnhub free-tier accounts
     (every ticker 403s). Fails soft (returns None) on ANY error, including a
@@ -589,7 +639,9 @@ def fetch_finnhub_sentiment(ticker: str) -> dict[str, Any] | None:
     bullish = sentiment.get("bullishPercent")
     bearish = sentiment.get("bearishPercent")
     if bullish is None or bearish is None:
-        return None  # Finnhub returns an empty/zeroed shape for tickers it has no coverage for
+        return None  # Finnhub returns an empty shape for some tickers it has no coverage for
+    if bullish == 0 and bearish == 0:
+        return None  # ...and a zeroed shape for others — no articles scored, not a neutral reading
 
     return {
         "provider": "Finnhub (aggregated)",
@@ -616,6 +668,43 @@ def _get_vader_analyzer() -> Any:
     return _vader_analyzer
 
 
+# Providers whose items are not commentary about the company and so carry no
+# tone to score: SEC EDGAR titles are synthetic boilerplate built by
+# `fetch_sec_filings` ("8-K filing: Apple Inc."), and TED titles describe a
+# public tender ("Supply of laptops"). Scoring them would add near-zero
+# "neutral" readings that drag the average toward 0 and inflate n_articles.
+_NON_SENTIMENT_PROVIDERS = frozenset({"SEC EDGAR", "TED"})
+
+
+def _sentiment_texts(articles: list[dict[str, Any]]) -> list[str]:
+    """
+    The "title. description" texts that sentiment is actually computed on,
+    shared by FinBERT and VADER so both tiers measure the same thing:
+    - items from `_NON_SENTIMENT_PROVIDERS` are dropped (see above);
+    - items whose normalised title (lowercased, whitespace-collapsed) was
+      already seen are dropped, since the same wire story is often returned
+      by several providers and would otherwise be counted, and weighted,
+      several times in the average;
+    - items with no title and no description are dropped.
+    """
+    texts: list[str] = []
+    seen_titles: set[str] = set()
+    for a in articles:
+        if a.get("provider") in _NON_SENTIMENT_PROVIDERS:
+            continue
+        title = (a.get("title") or "").strip()
+        description = (a.get("description") or "").strip()
+        if not title and not description:
+            continue
+        normalised_title = " ".join(title.lower().split())
+        if normalised_title:
+            if normalised_title in seen_titles:
+                continue
+            seen_titles.add(normalised_title)
+        texts.append(f"{title}. {description}".strip())
+    return texts
+
+
 def compute_local_sentiment(articles: list[dict[str, Any]]) -> dict[str, Any] | None:
     """
     Fallback sentiment scored locally from the headlines/descriptions already
@@ -628,17 +717,17 @@ def compute_local_sentiment(articles: list[dict[str, Any]]) -> dict[str, Any] | 
     key), and specifically tuned for short, informal text, which headlines
     are closer to than to long-form prose.
 
-    Returns None if there's nothing to score (no articles at all) — that case
-    is distinct from "computed a neutral score" and callers must not conflate
-    the two.
+    Only news items are scored, each distinct headline once (see
+    `_sentiment_texts`), so `n_articles` counts scored headlines, not every
+    item fetched. Returns None if there's nothing to score (no articles, or
+    only filings/tenders) — that case is distinct from "computed a neutral
+    score" and callers must not conflate the two.
     """
-    if not articles:
+    texts = _sentiment_texts(articles)
+    if not texts:
         return None
     analyzer = _get_vader_analyzer()
-    scores = [
-        analyzer.polarity_scores(f"{a.get('title', '')}. {a.get('description', '')}")["compound"]
-        for a in articles
-    ]
+    scores = [analyzer.polarity_scores(text)["compound"] for text in texts]
     avg_score = sum(scores) / len(scores)
     bullish_count = sum(1 for s in scores if s > 0.05)   # VADER's own documented neutral band
     bearish_count = sum(1 for s in scores if s < -0.05)
@@ -678,9 +767,11 @@ def fetch_finbert_sentiment(articles: list[dict[str, Any]]) -> dict[str, Any] | 
     the safety net that can never fail) if this tier is unavailable — no
     key configured, or every request failed.
 
-    Scores each of the first `FINBERT_MAX_ARTICLES` articles' title+description
-    one at a time (not batched), since HF-hosted models don't consistently
-    share a single-vs-batch response shape across endpoints — scoring one
+    Scores the title+description of each of the first `FINBERT_MAX_ARTICLES`
+    distinct news headlines (filings, tenders and repeated headlines are
+    skipped, see `_sentiment_texts`) one at a time (not batched), since
+    HF-hosted models don't consistently share a single-vs-batch response
+    shape across endpoints — scoring one
     text per call keeps the request shape unambiguous.
 
     Response-shape handling: the older `api-inference.huggingface.co`
@@ -705,10 +796,9 @@ def fetch_finbert_sentiment(articles: list[dict[str, Any]]) -> dict[str, Any] | 
     headers = {"Authorization": f"Bearer {LLM_SETTINGS.huggingface_api_key}"}
     scores: list[float] = []  # positive_score - negative_score per article, in [-1, 1]
 
-    for article in articles[:FINBERT_MAX_ARTICLES]:
-        text = f"{article.get('title', '')}. {article.get('description', '')}".strip()
-        if not text or text == ".":
-            continue
+    # The cap is applied AFTER `_sentiment_texts` filters out filings/tenders
+    # and duplicate headlines, so those can't use up the per-ticker budget.
+    for text in _sentiment_texts(articles)[:FINBERT_MAX_ARTICLES]:
         try:
             response = requests.post(FINBERT_INFERENCE_URL, headers=headers, json={"inputs": text}, timeout=15)
             response.raise_for_status()
@@ -733,6 +823,11 @@ def fetch_finbert_sentiment(articles: list[dict[str, Any]]) -> dict[str, Any] | 
             payload = payload[0]
 
         class_scores = {item.get("label"): item.get("score", 0.0) for item in payload if isinstance(item, dict)}
+        if "positive" not in class_scores and "negative" not in class_scores:
+            # An empty list ([] or [[]]) or unknown labels: nothing was
+            # classified, so skip the article rather than record a fake 0.0.
+            logger.warning("FinBERT returned no positive/negative class scores, skipping this article: %r", payload)
+            continue
         positive = class_scores.get("positive", 0.0)
         negative = class_scores.get("negative", 0.0)
         scores.append(positive - negative)

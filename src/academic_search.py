@@ -203,7 +203,10 @@ def search_arxiv_papers(query: str, limit: int = 3) -> list[dict[str, Any]]:
     results = []
     for entry in root.findall(f"{ARXIV_ATOM_NS}entry")[:limit]:
         title_el = entry.find(f"{ARXIV_ATOM_NS}title")
-        title = (title_el.text or "").strip().replace("\n", " ") if title_el is not None else ""
+        # arXiv hard-wraps long titles as "...with\n  GARCH models": collapse
+        # every whitespace run to one space, otherwise the title displays with
+        # stray gaps and never matches the same paper's Semantic Scholar title.
+        title = " ".join((title_el.text or "").split()) if title_el is not None else ""
         if not title:
             continue  # a malformed/empty entry — skip rather than show a blank citation
 
@@ -231,6 +234,13 @@ def search_arxiv_papers(query: str, limit: int = 3) -> list[dict[str, Any]]:
     return results
 
 
+def _normalise_title(title: str) -> str:
+    """Dedup key for a paper title: lowercased with every whitespace run
+    collapsed to one space, so the same paper indexed by two sources matches
+    even when one of them wraps or pads the title differently."""
+    return " ".join(title.lower().split())
+
+
 def search_academic_papers(query: str, limit: int = 3) -> list[dict[str, Any]]:
     """
     Public entry point: search academic literature for `query`, combining
@@ -238,7 +248,7 @@ def search_academic_papers(query: str, limit: int = 3) -> list[dict[str, Any]]:
     across published venues, includes citation counts) and arXiv (fills any
     remaining slots up to `limit`, genuinely free with no key at all,
     canonical source for many of the specific techniques this app cites).
-    Deduplicated by normalised (lowercased, stripped) title, since the same
+    Deduplicated by normalised (lowercased, whitespace-collapsed) title, since the same
     paper is often indexed on both — a Semantic Scholar hit for a paper
     already found there is never re-added from arXiv.
 
@@ -252,9 +262,9 @@ def search_academic_papers(query: str, limit: int = 3) -> list[dict[str, Any]]:
     arxiv_results = search_arxiv_papers(query, remaining) if remaining > 0 else []
 
     combined = list(semantic_scholar_results)
-    seen_titles = {r["title"].strip().lower() for r in combined}
+    seen_titles = {_normalise_title(r["title"]) for r in combined}
     for paper in arxiv_results:
-        normalised = paper["title"].strip().lower()
+        normalised = _normalise_title(paper["title"])
         if normalised not in seen_titles:
             combined.append(paper)
             seen_titles.add(normalised)

@@ -322,3 +322,22 @@ def test_format_papers_for_prompt_truncates_authors_with_et_al():
     assert "et al." in formatted
     assert "A, B, C et al." in formatted
     assert ", D" not in formatted
+
+def test_search_arxiv_papers_collapses_wrapped_title_whitespace(monkeypatch):
+    feed = _arxiv_atom_feed([{"title": "Forecasting volatility with\n  GARCH models"}])
+    monkeypatch.setattr(academic_search.requests, "get", lambda *a, **k: _FakeArxivResponse(feed))
+    results = search_arxiv_papers("garch")
+    assert results[0]["title"] == "Forecasting volatility with GARCH models"
+
+
+def test_search_academic_papers_dedupes_a_title_wrapped_differently(monkeypatch):
+    # arXiv hard-wraps long titles; the same paper must still match its
+    # Semantic Scholar entry and not be listed twice.
+    def _fake_get(url, **kwargs):
+        if url == academic_search.SEMANTIC_SCHOLAR_SEARCH_URL:
+            return _FakeResponse({"data": [_paper(title="Forecasting Volatility with GARCH Models")]})
+        return _FakeArxivResponse(_arxiv_atom_feed([{"title": "Forecasting volatility with\n  GARCH models"}]))
+
+    monkeypatch.setattr(academic_search.requests, "get", _fake_get)
+    results = search_academic_papers("garch", limit=3)
+    assert len(results) == 1

@@ -291,7 +291,7 @@ def test_fetch_gdelt_news_returns_parsed_results(monkeypatch):
     assert results[0]["title"] == "Apple announces new product"
     assert results[0]["source"] == "reuters.com"
     assert results[0]["provider"] == "GDELT"
-    assert results[0]["published_at"] == "2026-09-08T12:00:00"
+    assert results[0]["published_at"] == "2026-09-08T12:00:00+00:00"
 
 
 def test_fetch_gdelt_news_respects_max_articles(monkeypatch):
@@ -529,3 +529,62 @@ def test_fetch_ted_notices_never_sends_an_api_key(monkeypatch):
     monkeypatch.setattr(news_data.requests, "post", _fake_post)
     fetch_ted_notices("AAPL", "Apple")
     assert not any("key" in str(k).lower() for k in captured["json"])
+
+
+def test_fetch_ted_notices_renders_list_valued_fields_as_plain_text(monkeypatch):
+    # Multi-valued TED fields come back as lists, directly or inside the
+    # language-keyed dict — they must not render as a Python list repr.
+    notice = _ted_notice(buyer={"deu": ["Stadt München"]}, country=["DEU"])
+    monkeypatch.setattr(news_data.requests, "post", lambda *a, **k: _FakeResponse(_ted_payload([notice])))
+
+    results = fetch_ted_notices("SAP", "SAP")
+
+    assert results[0]["description"] == "Buyer: Stadt München (DEU)"
+
+
+def test_fetch_ted_notices_omits_empty_country_parentheses(monkeypatch):
+    notice = _ted_notice(country=None)
+    monkeypatch.setattr(news_data.requests, "post", lambda *a, **k: _FakeResponse(_ted_payload([notice])))
+    assert fetch_ted_notices("AAPL", "Apple")[0]["description"] == "Buyer: City of Amsterdam"
+
+
+# ---------------------------------------------------------------------------
+# Timestamps — every provider's published_at carries an explicit UTC offset
+# ---------------------------------------------------------------------------
+
+def test_fetch_finnhub_news_converts_epoch_in_utc_not_local_time(monkeypatch):
+    import dataclasses
+    import datetime as dt
+
+    fake_settings = dataclasses.replace(news_data.LLM_SETTINGS, finnhub_api_key="fake-key")
+    monkeypatch.setattr(news_data, "LLM_SETTINGS", fake_settings)
+    epoch = int(dt.datetime(2026, 9, 8, 12, 0, tzinfo=dt.timezone.utc).timestamp())
+    payload = [{"headline": "Apple beats estimates", "datetime": epoch, "source": "Reuters", "url": "http://x"}]
+    monkeypatch.setattr(news_data.requests, "get", lambda *a, **k: _FakeResponse(payload))
+
+    results = news_data.fetch_finnhub_news("AAPL")
+
+    assert results[0]["published_at"] == "2026-09-08T12:00:00+00:00"
+
+
+def test_fetch_google_news_rss_converts_pubdate_to_iso_utc(monkeypatch):
+    feed = _rss_feed([{"title": "Apple beats estimates", "pubDate": "Tue, 08 Sep 2026 14:00:00 +0200"}])
+    monkeypatch.setattr(news_data.requests, "get", lambda *a, **k: _FakeRssResponse(feed))
+    assert fetch_google_news_rss("AAPL", "Apple")[0]["published_at"] == "2026-09-08T12:00:00+00:00"
+
+
+def test_fetch_google_news_rss_keeps_an_unparsable_pubdate_unchanged(monkeypatch):
+    feed = _rss_feed([{"title": "Apple beats estimates", "pubDate": "sometime last week"}])
+    monkeypatch.setattr(news_data.requests, "get", lambda *a, **k: _FakeRssResponse(feed))
+    assert fetch_google_news_rss("AAPL", "Apple")[0]["published_at"] == "sometime last week"
+
+
+def test_fetch_sec_filings_does_not_crash_on_empty_display_names(monkeypatch):
+    hit = _hit(cik="0000320193", accession_id="0000320193-26-000106:aapl-20260815.htm")
+    hit["_source"]["display_names"] = []
+    monkeypatch.setattr(news_data.requests, "get", lambda *a, **k: _FakeResponse(_edgar_payload([hit])))
+    monkeypatch.setattr(news_data, "_fetch_cik_for_ticker", lambda ticker: None)
+
+    results = fetch_sec_filings("Apple Inc.", "AAPL")
+
+    assert results[0]["title"] == "8-K filing: Apple Inc."

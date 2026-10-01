@@ -291,7 +291,12 @@ def test_lstm_forecast_is_deterministic_given_the_same_input():
 
 
 def test_lstm_forecast_falls_back_to_naive_when_training_raises(monkeypatch):
-    import torch
+    # OSError, not just ImportError: on Windows a policy-blocked torch DLL fails
+    # at import with WinError, which pytest.importorskip does not catch.
+    try:
+        import torch
+    except (ImportError, OSError):
+        pytest.skip("torch cannot be loaded in this environment")
 
     prices = _price_series(150, seed=6)
 
@@ -299,6 +304,27 @@ def test_lstm_forecast_falls_back_to_naive_when_training_raises(monkeypatch):
         raise RuntimeError("simulated training failure")
 
     monkeypatch.setattr(torch.nn, "LSTM", _broken_lstm)
+    result = lstm_forecast(prices, horizon=10)
+    expected = naive_forecast(prices, horizon=10)
+    pd.testing.assert_series_equal(result["forecast"], expected["forecast"])
+
+
+def test_theta_forecast_band_starts_at_one_step_error_scale():
+    # Random walk with unit-variance steps: the first-step 95% half-width
+    # should be ~1.96, like naive/ETS, not the much larger spread of the
+    # series around its linear trend.
+    rng = np.random.default_rng(1)
+    idx = pd.bdate_range("2020-01-01", periods=750)
+    prices = pd.Series(100 + np.cumsum(rng.normal(0, 1, 750)), index=idx)
+    result = theta_forecast(prices, horizon=10)
+    first_half_width = (result["upper"].iloc[0] - result["forecast"].iloc[0]) / 1.96
+    assert first_half_width == pytest.approx(1.0, rel=0.15)
+
+
+def test_lstm_forecast_falls_back_to_naive_when_torch_cannot_be_imported(monkeypatch):
+    import sys
+    monkeypatch.setitem(sys.modules, "torch", None)  # makes `import torch` raise ImportError
+    prices = _price_series(MIN_HISTORY_POINTS_FOR_LSTM + 50, seed=3)
     result = lstm_forecast(prices, horizon=10)
     expected = naive_forecast(prices, horizon=10)
     pd.testing.assert_series_equal(result["forecast"], expected["forecast"])

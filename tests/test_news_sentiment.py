@@ -307,3 +307,85 @@ def test_fetch_finbert_sentiment_handles_model_loading_cold_start_gracefully(mon
         lambda *a, **k: _FinbertResponse({"error": "Model ProsusAI/finbert is currently loading"}),
     )
     assert fetch_finbert_sentiment([_article()]) is None
+
+def test_fetch_finbert_sentiment_skips_an_empty_classification_instead_of_scoring_zero(monkeypatch):
+    # [] / [[]] means nothing was classified — recording it as 0.0 would pull
+    # the average toward neutral and inflate n_articles.
+    responses = iter([_FinbertResponse([[]]), _FinbertResponse(_finbert_classes(positive=0.8, negative=0.0, neutral=0.2))])
+    monkeypatch.setattr(news_data.requests, "post", lambda *a, **k: next(responses))
+    result = fetch_finbert_sentiment([_article("first"), _article("second")])
+    assert result["n_articles"] == 1
+    assert result["score"] == pytest.approx(0.8, abs=1e-9)
+
+
+def test_fetch_finbert_sentiment_does_not_spend_its_cap_on_filings(monkeypatch):
+    sent_texts = []
+
+    def _fake_post(url, headers=None, json=None, timeout=None):
+        sent_texts.append(json["inputs"])
+        return _FinbertResponse(_finbert_classes(positive=0.7, negative=0.1, neutral=0.2))
+
+    monkeypatch.setattr(news_data.requests, "post", _fake_post)
+    filings = [
+        {"title": f"8-K filing: Apple Inc. #{i}", "description": "Filed 2026-09-01", "provider": "SEC EDGAR"}
+        for i in range(news_data.FINBERT_MAX_ARTICLES)
+    ]
+    news = {"title": "Apple beats estimates", "description": "Strong quarter", "provider": "NewsAPI"}
+
+    result = fetch_finbert_sentiment(filings + [news])
+
+    assert sent_texts == ["Apple beats estimates. Strong quarter"]
+    assert result["n_articles"] == 1
+
+
+# ---------------------------------------------------------------------------
+# What sentiment is computed on — news only, each headline once
+# ---------------------------------------------------------------------------
+
+def test_compute_local_sentiment_ignores_sec_filings_and_ted_notices():
+    news = {"title": "Company smashes earnings expectations, stock soars", "description": "", "provider": "NewsAPI"}
+    filing = {"title": "8-K filing: Apple Inc.", "description": "Filed 2026-09-01", "provider": "SEC EDGAR"}
+    tender = {"title": "Supply of laptops", "description": "Buyer: City of Amsterdam", "provider": "TED"}
+
+    with_extras = compute_local_sentiment([news, filing, tender])
+    news_only = compute_local_sentiment([news])
+
+    assert with_extras["n_articles"] == 1
+    assert with_extras["score"] == pytest.approx(news_only["score"])
+
+
+def test_compute_local_sentiment_none_when_only_filings_were_fetched():
+    filing = {"title": "8-K filing: Apple Inc.", "description": "Filed 2026-09-01", "provider": "SEC EDGAR"}
+    assert compute_local_sentiment([filing]) is None
+
+
+def test_compute_local_sentiment_counts_a_headline_repeated_across_providers_once():
+    positive = {"title": "Company smashes earnings expectations, stock soars", "description": "", "provider": "NewsAPI"}
+    duplicate = dict(positive, title="  company smashes earnings   expectations, stock soars", provider="Finnhub")
+    negative = {"title": "Regulators launch fraud investigation, shares plunge", "description": "", "provider": "GDELT"}
+
+    result = compute_local_sentiment([positive, duplicate, negative])
+
+    assert result["n_articles"] == 2
+    assert result["score"] == pytest.approx(compute_local_sentiment([positive, negative])["score"])
+
+
+# ---------------------------------------------------------------------------
+# fetch_finnhub_sentiment — response parsing
+# ---------------------------------------------------------------------------
+
+def test_fetch_finnhub_sentiment_converts_fractions_to_a_signed_score(monkeypatch):
+    payload = {"sentiment": {"bullishPercent": 0.7, "bearishPercent": 0.3}, "buzz": {"articlesInLastWeek": 42}}
+    monkeypatch.setattr(news_data.requests, "get", lambda *a, **k: _FakeResponse(200, payload))
+    result = fetch_finnhub_sentiment("AAPL")
+    assert result["score"] == pytest.approx(0.4)
+    assert result["bullish_pct"] == pytest.approx(70.0)
+    assert result["n_articles"] == 42
+
+
+def test_fetch_finnhub_sentiment_treats_a_zeroed_shape_as_no_coverage(monkeypatch):
+    # Finnhub answers 200 with 0/0 for a ticker it doesn't cover: that must
+    # fall through the cascade (None), not be shown as a neutral 0.0 score.
+    payload = {"sentiment": {"bullishPercent": 0, "bearishPercent": 0}, "buzz": {"articlesInLastWeek": 0}}
+    monkeypatch.setattr(news_data.requests, "get", lambda *a, **k: _FakeResponse(200, payload))
+    assert fetch_finnhub_sentiment("XYZ") is None

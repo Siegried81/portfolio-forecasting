@@ -665,3 +665,114 @@ def test_fetch_yfinance_fundamentals_does_not_trip_breaker_on_unrelated_errors(m
     monkeypatch.setattr(market_data.yf, "Ticker", _raise_other)
     assert _fetch_yfinance_fundamentals("MSFT") is None
     assert market_data._yahoo_down_until <= time.monotonic()
+
+# ---------------------------------------------------------------------------
+# fetch_adjusted_close — failed ticker kept as an all-NaN column
+# ---------------------------------------------------------------------------
+
+def test_fetch_adjusted_close_reports_a_ticker_yfinance_returned_as_all_nan(monkeypatch):
+    index = pd.to_datetime(["2024-01-02", "2024-01-03"])
+    raw = pd.concat(
+        {
+            "AAPL": pd.DataFrame({"Close": [100.0, 101.0]}, index=index),
+            "BADTICKER": pd.DataFrame({"Close": [float("nan"), float("nan")]}, index=index),
+        },
+        axis=1,
+    )
+    monkeypatch.setattr(market_data, "_download_yfinance", lambda *a, **k: raw)
+
+    with pytest.raises(MarketDataError, match="BADTICKER"):
+        fetch_adjusted_close(["AAPL", "BADTICKER"], dt.date(2024, 1, 1), dt.date(2024, 1, 5))
+
+
+# ---------------------------------------------------------------------------
+# Twelve Data — body-level 429 and flat-payload attribution
+# ---------------------------------------------------------------------------
+
+def test_download_twelvedata_retries_on_a_body_level_429(monkeypatch):
+    responses = [
+        _FakeResponse({"code": 429, "message": "You have run out of API credits for the current minute.", "status": "error"}),
+        _FakeResponse({"meta": {"symbol": "AAPL"}, "values": [{"datetime": "2024-01-02", "close": "100.0"}]}),
+    ]
+    sleeps = []
+    monkeypatch.setattr(market_data.requests, "get", lambda *a, **k: responses.pop(0))
+    monkeypatch.setattr(market_data.time, "sleep", lambda seconds: sleeps.append(seconds))
+
+    result = _download_twelvedata(["AAPL"], dt.date(2024, 1, 1), dt.date(2024, 1, 5))
+
+    assert result["AAPL"].iloc[0] == 100.0
+    assert len(sleeps) == 1
+
+
+def test_download_twelvedata_raises_after_repeated_body_level_429(monkeypatch):
+    monkeypatch.setattr(
+        market_data.requests, "get",
+        lambda *a, **k: _FakeResponse({"code": 429, "message": "out of credits", "status": "error"}),
+    )
+    monkeypatch.setattr(market_data.time, "sleep", lambda seconds: None)
+    with pytest.raises(MarketDataError, match="rate limit"):
+        _download_twelvedata(["AAPL"], dt.date(2024, 1, 1), dt.date(2024, 1, 5))
+
+
+def test_download_twelvedata_files_a_flat_payload_under_its_own_symbol(monkeypatch):
+    payload = {"meta": {"symbol": "MSFT"}, "values": [{"datetime": "2024-01-02", "close": "400.0"}]}
+    monkeypatch.setattr(market_data.requests, "get", lambda *a, **k: _FakeResponse(payload))
+
+    result = _download_twelvedata(["AAPL", "MSFT"], dt.date(2024, 1, 1), dt.date(2024, 1, 5))
+
+    assert list(result.columns) == ["MSFT"]
+    assert result["MSFT"].iloc[0] == 400.0
+
+
+def test_fetch_twelvedata_fundamentals_retries_on_a_body_level_429(monkeypatch):
+    responses = [
+        _FakeResponse({"code": 429, "message": "out of credits", "status": "error"}),
+        _FakeResponse({"meta": {"name": "Apple Inc"}, "statistics": {"valuations_metrics": {"trailing_pe": 30.0}}}),
+    ]
+    monkeypatch.setattr(market_data.requests, "get", lambda *a, **k: responses.pop(0))
+    monkeypatch.setattr(market_data.time, "sleep", lambda seconds: None)
+
+    result = _fetch_twelvedata_fundamentals("AAPL")
+
+    assert result is not None
+    assert result["pe_ratio"] == 30.0
+
+
+# ---------------------------------------------------------------------------
+# _download_yahoo_direct — session dates read in the exchange timezone
+# ---------------------------------------------------------------------------
+
+def test_download_yahoo_direct_dates_bars_in_the_exchange_timezone(monkeypatch):
+    # 2024-01-02 10:00 AEDT (Sydney open) is 2024-01-01 23:00 UTC.
+    sydney_open = int(pd.Timestamp("2024-01-02 10:00", tz="Australia/Sydney").timestamp())
+    payload = {"chart": {"result": [{
+        "meta": {"exchangeTimezoneName": "Australia/Sydney"},
+        "timestamp": [sydney_open],
+        "indicators": {"adjclose": [{"adjclose": [50.0]}]},
+    }]}}
+    monkeypatch.setattr(market_data.requests, "get", lambda *a, **k: _FakeResponse(payload))
+
+    result = market_data._download_yahoo_direct(["BHP.AX"], dt.date(2024, 1, 1), dt.date(2024, 1, 5))
+
+    assert list(result.index) == [pd.Timestamp("2024-01-02")]
+
+
+def test_download_yahoo_direct_falls_back_to_utc_dates_without_a_timezone(monkeypatch):
+    new_york_open = int(pd.Timestamp("2024-01-02 14:30", tz="UTC").timestamp())
+    payload = {"chart": {"result": [{
+        "meta": {},
+        "timestamp": [new_york_open],
+        "indicators": {"adjclose": [{"adjclose": [100.0]}]},
+    }]}}
+    monkeypatch.setattr(market_data.requests, "get", lambda *a, **k: _FakeResponse(payload))
+
+    result = market_data._download_yahoo_direct(["AAPL"], dt.date(2024, 1, 1), dt.date(2024, 1, 5))
+
+    assert list(result.index) == [pd.Timestamp("2024-01-02")]
+
+
+def test_redact_api_key_also_strips_finnhub_token():
+    text = "401 Client Error for url: https://finnhub.io/api/v1/stock/metric?symbol=AAPL&token=finnhub-secret"
+    redacted = _redact_api_key(text)
+    assert "finnhub-secret" not in redacted
+    assert "token=***REDACTED***" in redacted

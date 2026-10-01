@@ -104,7 +104,13 @@ def _call_groq(messages: list[Message], temperature: float, max_tokens: int) -> 
     last_error: Exception | None = None
     for i, key in enumerate(LLM_SETTINGS.groq_api_keys):
         try:
-            client = Groq(api_key=key)
+            # max_retries=0: the SDK's default (2 retries, honouring Retry-After
+            # up to 60 s each) would keep hammering a rate-limited key before
+            # raising RateLimitError, delaying the rotation below by up to
+            # minutes per key; the next key / next tier IS the retry here.
+            # Explicit timeout matches the hosted fallbacks instead of the SDK's
+            # 60 s default, so a hung Groq call reaches the fallback chain sooner.
+            client = Groq(api_key=key, timeout=30, max_retries=0)
             # Our `Message` alias (plain {"role", "content"} dicts) is deliberately
             # provider-agnostic so this module stays the one seam every caller goes
             # through regardless of backend. Groq's SDK wants its own stricter
@@ -202,10 +208,21 @@ def _call_ollama(messages: list[Message], temperature: float, max_tokens: int) -
     return str(response.json().get("message", {}).get("content", ""))
 
 
+def _require_text(text: str, backend: str) -> str:
+    """Treat a blank completion as a failed call rather than an answer. A
+    provider can return HTTP 200 with empty/null content (e.g. a reasoning
+    model that spent its whole `max_tokens` budget before writing any
+    output); passing that through would show the user an empty answer
+    labelled as a success, so it raises and lets `chat()` try the next tier."""
+    if not text.strip():
+        raise ValueError(f"{backend} returned an empty response")
+    return text
+
+
 def chat(messages: list[Message], temperature: float = 0.3, max_tokens: int = 600) -> tuple[str, str]:
     """
     Send a chat completion request. Tries Groq first; on ANY failure (missing
-    key, network error, rate limit, model deprecation) falls through the
+    key, network error, rate limit, model deprecation, empty completion) falls through the
     configured hosted fallback providers in order (see `_fallback_providers`
     — OpenRouter, then Cerebras, then SambaNova, skipping any without a key
     set), then finally to a local Ollama instance if every hosted provider
@@ -219,7 +236,7 @@ def chat(messages: list[Message], temperature: float = 0.3, max_tokens: int = 60
     errors: dict[str, str] = {}
 
     try:
-        return _call_groq(messages, temperature, max_tokens), "groq"
+        return _require_text(_call_groq(messages, temperature, max_tokens), "groq"), "groq"
     except Exception as groq_error:
         errors["groq"] = str(groq_error)
         logger.warning("Groq call failed, trying hosted fallback providers: %s", groq_error)
@@ -227,13 +244,13 @@ def chat(messages: list[Message], temperature: float = 0.3, max_tokens: int = 60
     for provider in _fallback_providers():
         try:
             result = _call_openai_compatible_provider(provider, messages, temperature, max_tokens)
-            return result, f"{provider.label} (fallback)"
+            return _require_text(result, provider.label), f"{provider.label} (fallback)"
         except Exception as exc:
             errors[provider.label] = str(exc)
             logger.warning("%s call failed, trying next fallback: %s", provider.label, exc)
 
     try:
-        return _call_ollama(messages, temperature, max_tokens), "ollama (local fallback)"
+        return _require_text(_call_ollama(messages, temperature, max_tokens), "ollama"), "ollama (local fallback)"
     except Exception as ollama_error:
         errors["ollama"] = str(ollama_error)
         raise LLMUnavailableError(f"All LLM backends failed: {errors}") from ollama_error

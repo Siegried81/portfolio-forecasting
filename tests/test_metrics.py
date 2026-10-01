@@ -260,3 +260,11 @@ def test_summarise_performance_always_includes_ulcer_skew_kurtosis():
     assert "skewness" in summary
     assert "kurtosis" in summary
     assert summary["ulcer_index"] >= 0
+
+
+def test_sortino_downside_deviation_averages_over_all_periods():
+    """Sortino & Price: mean of min(excess, 0)^2 over EVERY period. Averaging over
+    the losing periods only gave sqrt(0.0005 / 2) here, i.e. a Sortino of 0.32."""
+    returns = pd.Series([0.02, -0.01, 0.03, -0.02])
+    expected = 0.005 / np.sqrt((0.01 ** 2 + 0.02 ** 2) / 4)
+    assert sortino_ratio(returns, risk_free_rate=0.0, periods_per_year=1) == pytest.approx(expected)

@@ -21,11 +21,24 @@ good candidate to route through this too.
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 import requests
 
 logger = logging.getLogger(__name__)
+
+_SECRET_QUERY_PARAM = re.compile(r"(api_key|apikey|token)=[^&\s]+", re.IGNORECASE)
+
+
+def _redact_secrets(text: str) -> str:
+    """
+    Mask credential query-param values (`api_key=`, `apikey=`, `token=`) in a
+    string before it is logged. `requests`' HTTPError message embeds the full
+    request URL, query string included — FRED takes its key as `api_key=`,
+    so logging the raw exception would write that key into the logs.
+    """
+    return _SECRET_QUERY_PARAM.sub(lambda m: f"{m.group(1)}=***REDACTED***", text)
 
 
 def safe_get_json(
@@ -48,5 +61,5 @@ def safe_get_json(
         return result
     except (requests.RequestException, ValueError) as exc:
         label = f" ({context})" if context else ""
-        logger.warning("GET %s%s failed: %s", url, label, exc)
+        logger.warning("GET %s%s failed: %s", url, label, _redact_secrets(str(exc)))
         return None

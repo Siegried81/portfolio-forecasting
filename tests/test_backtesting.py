@@ -297,3 +297,19 @@ def test_compare_to_previous_period_runs_end_to_end_on_a_real_walk_forward_resul
     assert len(comparison) == len(results)
     first_windows = comparison[comparison["window"] == comparison["window"].min()]
     assert first_windows["sharpe_ratio_previous"].isna().all()
+
+
+def test_run_walk_forward_handles_an_asset_listed_after_the_first_window():
+    # CCC has no prices before period 150, so window 1 (training ends at 100)
+    # cannot use it; later windows must pick it up once it has enough history.
+    tickers = ["AAA", "BBB", "CCC"]
+    prices = _synthetic_prices(400, tickers, seed=8)
+    prices.iloc[:150, 2] = np.nan
+    results = run_walk_forward(
+        prices, tickers, horizon=60, n_windows=5, forecast_model="Naive (random walk)",
+        risk_free_rate=0.04, periods_per_year=252, min_train_periods=100, transaction_cost_bps=10,
+    )
+    n_assets = results.groupby("window")["n_assets"].first()
+    assert n_assets.loc[1] == 2
+    assert n_assets.iloc[-1] == 3
+    assert results["annual_volatility"].notna().all()

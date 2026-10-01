@@ -137,8 +137,9 @@ def load_chunks(tickers: list[str]) -> list[Chunk]:
 def retrieve(query: str, chunks: list[Chunk], top_k: int = 4) -> list[Chunk]:
     """
     Return up to `top_k` chunks most relevant to `query` by TF-IDF cosine
-    similarity, filtering out zero-similarity matches (a chunk sharing no
-    vocabulary with the query is not relevant, regardless of rank). Returns []
+    similarity over each chunk's ticker symbol plus text, filtering out
+    zero-similarity matches (a chunk sharing no vocabulary with the query is
+    not relevant, regardless of rank). Returns []
     if there's nothing to retrieve from, or if the query/corpus share no
     vocabulary at all — callers should treat that as "no relevant news found"
     and fall back gracefully, never crash on it.
@@ -146,7 +147,11 @@ def retrieve(query: str, chunks: list[Chunk], top_k: int = 4) -> list[Chunk]:
     if not chunks or not query.strip():
         return []
 
-    texts = [c.text for c in chunks]
+    # The ticker symbol is indexed alongside the text: headlines usually name
+    # the company ("Nvidia"), not the symbol, so without it a question like
+    # "news on NVDA earnings" scores every ticker's earnings headline equally
+    # and the tie is broken by corpus order, i.e. often another ticker's news.
+    texts = [f"{c.ticker} {c.text}" for c in chunks]
     vectorizer = TfidfVectorizer(stop_words="english")
     try:
         matrix = vectorizer.fit_transform(texts + [query])
