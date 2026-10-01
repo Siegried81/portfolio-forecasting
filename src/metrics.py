@@ -29,7 +29,9 @@ def compute_returns(prices: pd.DataFrame) -> pd.DataFrame:
 
 def portfolio_returns(asset_returns: pd.DataFrame, weights: pd.Series) -> pd.Series:
     """
-    Weighted-sum portfolio return series.
+    Weighted-sum portfolio return series at CONSTANT weights, i.e. rebalanced
+    back to `weights` every period (see `buy_and_hold_returns` for a portfolio
+    that is held between rebalances).
 
     Aligns columns explicitly on `weights.index` so a mismatched ticker order
     (a classic silent bug when weights come from a different function) fails loud
@@ -37,6 +39,28 @@ def portfolio_returns(asset_returns: pd.DataFrame, weights: pd.Series) -> pd.Ser
     """
     aligned = asset_returns[weights.index].dropna(how="any")
     return aligned.mul(weights, axis=1).sum(axis=1)
+
+
+def buy_and_hold_returns(asset_returns: pd.DataFrame, weights: pd.Series) -> tuple[pd.Series, pd.Series]:
+    """
+    Return series of a portfolio bought at `weights` and then left to drift
+    with prices until the next rebalance, plus its weights at the end.
+
+    `portfolio_returns` keeps the weights constant, which silently assumes a
+    rebalance every period, while the backtest only charges trading costs at
+    window boundaries. Holding the positions makes the returns and the
+    charged turnover describe the same strategy, and the end weights are what
+    the next rebalance actually trades away from.
+    """
+    aligned = asset_returns[weights.index].dropna(how="any")
+    if aligned.empty:
+        return pd.Series(dtype=float), weights.copy()
+    holdings = (1.0 + aligned).cumprod().mul(weights, axis=1)  # value of each position
+    value = holdings.sum(axis=1)
+    previous_value = value.shift(1).fillna(float(weights.sum()))
+    returns = value / previous_value - 1.0
+    end_weights = holdings.iloc[-1] / value.iloc[-1]
+    return returns, end_weights
 
 
 def annualised_return(returns: pd.Series, periods_per_year: int = TRADING_DAYS_PER_YEAR) -> float:
@@ -125,8 +149,10 @@ def sortino_ratio(
     """
     period_rf = (1.0 + risk_free_rate) ** (1.0 / periods_per_year) - 1.0
     excess_returns = returns - period_rf
-    downside = excess_returns[excess_returns < 0]
-    downside_deviation = np.sqrt((downside ** 2).mean()) if len(downside) > 0 else 0.0
+    # Downside deviation averages min(excess, 0)^2 over ALL periods (Sortino &
+    # Price, 1994), not only the losing ones: averaging over losing periods
+    # alone overstates it and makes Sortino too low, more so the rarer losses are.
+    downside_deviation = float(np.sqrt((excess_returns.clip(upper=0.0) ** 2).mean()))
     if downside_deviation == 0 or np.isnan(downside_deviation):
         return float("nan")
     return float((excess_returns.mean() / downside_deviation) * np.sqrt(periods_per_year))

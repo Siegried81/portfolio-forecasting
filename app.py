@@ -36,6 +36,7 @@ from src.backtesting import (
     forecast_win_rate,
     generate_expanding_windows,
     run_walk_forward,
+    tickers_with_training_history,
 )
 from src.config import (
     ALL_KNOWN_TICKERS,
@@ -43,13 +44,13 @@ from src.config import (
     COV_METHOD_LEDOIT_WOLF,
     COV_METHOD_PCA,
     DEFAULT_EQUITY_TICKERS,
-    DEFAULT_FORECAST_HORIZON_DAYS,
     DEFAULT_MAX_WEIGHT_PER_ASSET,
     DEFAULT_PCA_FACTORS,
     DEFAULT_RISK_FREE_RATE,
     DEFAULT_TRANSACTION_COST_BPS,
     DEFAULT_WALK_FORWARD_WINDOWS,
     FREQUENCY_TO_PERIODS_PER_YEAR,
+    HORIZON_BOUNDS_BY_FREQUENCY,
     LLM_SETTINGS,
     MAX_CHAT_HISTORY_MESSAGES,
     MAX_PCA_FACTORS,
@@ -73,7 +74,10 @@ from src.market_data import (
     fetch_vix_snapshot,
     resample_prices,
 )
-from src.metrics import apply_transaction_cost, compute_returns, compute_turnover, portfolio_returns, summarise_performance
+from src.metrics import (
+    apply_transaction_cost, buy_and_hold_returns, compute_returns, compute_turnover, portfolio_returns,
+    summarise_performance,
+)
 from src.timeseries_diagnostics import adf_stationarity_test, hurst_exponent, rolling_sharpe
 from src.optimization import (
     concentration_hhi,
@@ -336,13 +340,13 @@ def render_sidebar() -> dict:
 
     st.sidebar.selectbox(
         "Quick range", options=["Custom"] + list(QUICK_DATE_RANGES.keys()),
-        index=3,  # defaults to "5 ans" on first load, matching the previous hardcoded default
+        index=3,  # defaults to "5 years" on first load, matching the previous hardcoded default
         key="quick_range_select", on_change=_apply_quick_range,
         help="Picks a preset window. Switch to 'Custom' to set exact dates below.",
     )
     col1, col2 = st.sidebar.columns(2)
     start_date = col1.date_input(
-        "Start date", value=today - dt.timedelta(days=QUICK_DATE_RANGES["5 ans"]), max_value=today, key="start_date_input",
+        "Start date", value=today - dt.timedelta(days=QUICK_DATE_RANGES["5 years"]), max_value=today, key="start_date_input",
     )
     end_date = col2.date_input("End date", value=today, max_value=today, key="end_date_input")
 
@@ -392,8 +396,10 @@ def render_sidebar() -> dict:
              "frictionless textbook comparison.",
     )
     horizon_unit = {"daily": "trading days", "weekly": "weeks", "monthly": "months", "yearly": "years"}[frequency]
+    horizon_min, horizon_max, horizon_default, horizon_step = HORIZON_BOUNDS_BY_FREQUENCY[frequency]
     forecast_horizon = st.sidebar.slider(
-        f"Forecast horizon ({horizon_unit})", min_value=10, max_value=90, value=DEFAULT_FORECAST_HORIZON_DAYS, step=5,
+        f"Forecast horizon ({horizon_unit})", min_value=horizon_min, max_value=horizon_max,
+        value=horizon_default, step=horizon_step, key=f"forecast_horizon_{frequency}",
         help="This slice of history at the END of your date range is held out and forecasted — "
              "the actual prices in that slice are then used to compute the 'realized-optimal' benchmark. "
              f"Counted in periods at the selected frequency ({frequency}), not calendar days.",
@@ -569,7 +575,9 @@ def _chart_palette(n: int) -> list[str]:
     return plotly.colors.sample_colorscale("turbo", [i / max(n - 1, 1) for i in range(n)])
 
 
-def render_overview_tab(prices: pd.DataFrame, tickers: list[str], periods_per_year: int) -> None:
+def render_overview_tab(
+    prices: pd.DataFrame, tickers: list[str], periods_per_year: int, risk_free_rate: float = DEFAULT_RISK_FREE_RATE,
+) -> None:
     source = prices.attrs.get("source", "yfinance")
     if "twelvedata" in source:
         st.caption(f"⚠️ Data source: **{source}** — Yahoo Finance was unreachable, using the Twelve Data fallback.")
@@ -583,7 +591,10 @@ def render_overview_tab(prices: pd.DataFrame, tickers: list[str], periods_per_ye
         color = palette[i]
         # Rebase to 100 at the start so assets with very different price levels
         # (e.g. AAPL ~$200 vs GOOG ~$150) are visually comparable on one chart.
-        rebased = prices[ticker] / prices[ticker].iloc[0] * 100
+        # Rebased on the ticker's own first price: a ticker listed after the
+        # start date has leading NaNs, and dividing by iloc[0] blanked its line.
+        series = prices[ticker].dropna()
+        rebased = series / series.iloc[0] * 100
         fig.add_trace(go.Scatter(x=rebased.index, y=rebased.values, name=ticker, mode="lines", line=dict(color=color)))
         # Label the ticker directly at the end of its own line, not just in the
         # legend/hover tooltip — with several overlapping lines, matching a
@@ -611,7 +622,12 @@ def render_overview_tab(prices: pd.DataFrame, tickers: list[str], periods_per_ye
         rows = []
         for ticker in tickers:
             asset_benchmark = benchmark_returns if ticker != BENCHMARK_TICKER else None  # a benchmark vs itself is meaningless
-            m = summarise_performance(returns[ticker], periods_per_year=periods_per_year, benchmark_returns=asset_benchmark)
+            # dropna(): periods before a late listing are not returns of zero, and
+            # counting them would dilute the annualised figures.
+            m = summarise_performance(
+                returns[ticker].dropna(), risk_free_rate=risk_free_rate, periods_per_year=periods_per_year,
+                benchmark_returns=asset_benchmark,
+            )
             rows.append({
                 "Ticker": ticker,
                 "Ann. return": f"{m['annual_return']:.1%}",
@@ -699,7 +715,9 @@ def render_overview_tab(prices: pd.DataFrame, tickers: list[str], periods_per_ye
     fig_rolling = go.Figure()
     rolling_palette = _chart_palette(len(tickers))
     for i, ticker in enumerate(tickers):
-        rs = rolling_sharpe(returns[ticker], window=rolling_window, periods_per_year=periods_per_year)
+        rs = rolling_sharpe(
+            returns[ticker], window=rolling_window, risk_free_rate=risk_free_rate, periods_per_year=periods_per_year,
+        )
         fig_rolling.add_trace(go.Scatter(x=rs.index, y=rs.values, name=ticker, mode="lines", line=dict(color=rolling_palette[i])))
     fig_rolling.update_layout(
         title=f"Rolling {window_label} Sharpe ratio",
@@ -874,7 +892,8 @@ def render_frontier_tab(
 
     st.caption(
         "Note: 'expected' figures above come from the optimizer's own mu/covariance inputs "
-        "(historical, Ledoit-Wolf shrinkage) — they are the optimizer's target, not a guarantee. "
+        f"(historical, {'PCA factor-model' if cov_method == COV_METHOD_PCA else 'Ledoit-Wolf shrinkage'} "
+        "covariance) — they are the optimizer's target, not a guarantee. "
         "See the Forecast & Compare tab for how this historical optimum performs OUT of sample."
     )
 
@@ -903,7 +922,7 @@ def render_frontier_tab(
                 st.info(
                     "Not enough overlapping history between this portfolio's returns and the "
                     f"factor data (need {MIN_OBSERVATIONS_FOR_FACTOR_REGRESSION}+ overlapping "
-                    "days) — widen the date range in the sidebar."
+                    "periods) — widen the date range or pick a finer frequency in the sidebar."
                 )
             else:
                 loadings_df = pd.Series(exposures["loadings"]).rename("Loading").to_frame()
@@ -943,13 +962,27 @@ def render_forecast_compare_tab(
     horizon = config["forecast_horizon"]
     if len(prices) <= horizon + 30:
         st.warning(
-            f"Not enough history for a {horizon}-day held-out window — widen the date "
+            f"Not enough history for a {horizon}-period held-out window plus 30 training periods — widen the date "
             "range or shorten the forecast horizon in the sidebar."
         )
         return None
 
     train_prices = prices.iloc[:-(horizon)]
     test_prices = prices.iloc[-(horizon + 1):]
+    # A ticker listed too recently has (almost) no training prices: forecasting
+    # it crashed, and its missing history skewed the covariance. Same rule as
+    # each walk-forward window (see backtesting.tickers_with_training_history).
+    all_tickers = tickers
+    tickers = tickers_with_training_history(train_prices, all_tickers)
+    if not tickers:
+        st.warning("None of the selected assets has enough price history before the held-out window.")
+        return None
+    left_out = [t for t in all_tickers if t not in tickers]
+    if left_out:
+        st.caption(
+            f"⚠️ Left out of this comparison (listed too recently to train on before the held-out "
+            f"window): {', '.join(left_out)}."
+        )
     test_returns = compute_returns(test_prices[tickers])
     periods_per_year = FREQUENCY_TO_PERIODS_PER_YEAR[config["frequency"]]
     rf = config["risk_free_rate"]
@@ -1082,7 +1115,9 @@ def render_forecast_compare_tab(
     cost_bps = config["transaction_cost_bps"]
     realized_metrics = {}
     for name, w in portfolios.items():
-        port_returns = portfolio_returns(test_returns, w)
+        # Bought once at these weights and held through the window, the same
+        # convention as each walk-forward window (metrics.buy_and_hold_returns).
+        port_returns, _ = buy_and_hold_returns(test_returns, w)
         if cost_bps > 0:
             turnover = compute_turnover(w, None)  # starting from cash — establishing this position from scratch
             port_returns = apply_transaction_cost(port_returns, turnover, cost_bps)
@@ -1175,7 +1210,7 @@ def render_forecast_compare_tab(
     )
 
     st.divider()
-    render_walk_forward_section(prices, tickers, config)
+    render_walk_forward_section(prices, all_tickers, config)  # filters per window itself
 
     return realized_metrics["Historical-based"], realized_metrics["Forecast-based"], realized_metrics["Realized-optimal"]
 
@@ -1328,11 +1363,13 @@ def render_ai_analyst_tab(
             with st.spinner("Thinking..."):
                 try:
                     text, backend = generate_commentary(results_context)
-                    st.session_state["commentary"] = (text, backend)
+                    st.session_state["commentary"] = (text, backend, results_context)
                 except LLMUnavailableError as exc:
                     st.error(f"LLM unavailable: {exc}")
-        if "commentary" in st.session_state:
-            text, backend = st.session_state["commentary"]
+        # Shown only for the numbers it was written about: a commentary from an
+        # earlier configuration would describe a different portfolio.
+        if st.session_state.get("commentary", (None, None, None))[2] == results_context:
+            text, backend, _ = st.session_state["commentary"]
             st.write(text)
             st.caption(f"Generated by: {backend}")
 
@@ -1346,6 +1383,9 @@ def render_ai_analyst_tab(
         # fetched for this exact ticker set (this session or a previous one)
         # is available to the chatbot immediately, without forcing a fresh
         # fetch first.
+        if st.session_state.get("news_chunks_tickers") != tuple(tickers):
+            st.session_state.pop("news_chunks", None)
+            st.session_state["news_chunks_tickers"] = tuple(tickers)
         if "news_chunks" not in st.session_state:
             persisted = load_chunks(tickers)
             if persisted:
@@ -1365,12 +1405,12 @@ def render_ai_analyst_tab(
                     "QQQ": "Nasdaq", "TLT": "Treasury bonds", "GLD": "Gold", "VNQ": "REIT real estate",
                 }
                 digest, backend, articles, sentiment_by_ticker = generate_news_digest(tickers, company_names)
-                st.session_state["news"] = (digest, backend, articles, sentiment_by_ticker)
+                st.session_state["news"] = (digest, backend, articles, sentiment_by_ticker, tuple(tickers))
                 chunks = build_chunks(articles)
                 st.session_state["news_chunks"] = chunks
                 save_chunks(chunks, tickers)  # no-op without REDIS_URL — see rag.py
-        if "news" in st.session_state:
-            digest, backend, articles, sentiment_by_ticker = st.session_state["news"]
+        if "news" in st.session_state and st.session_state["news"][4] == tuple(tickers):
+            digest, backend, articles, sentiment_by_ticker, _ = st.session_state["news"]
             st.write(digest)
 
             st.markdown("**Sentiment by ticker**")
@@ -1421,19 +1461,31 @@ def render_chatbot_tab() -> None:
     for msg in st.session_state["chat_history"]:
         with st.chat_message(msg["role"]):
             st.write(msg["content"])
+            if msg.get("caption"):
+                st.caption(msg["caption"])
 
     question = st.chat_input("e.g. Why is the Sortino ratio higher than the Sharpe ratio here?")
     if question:
+        # The LLM gets only the real conversation: the "Generated by" caption is
+        # display-only, and an error notice was never an answer the model gave.
+        llm_history = [
+            {"role": m["role"], "content": m["content"]}
+            for m in st.session_state["chat_history"] if not m.get("error")
+        ]
         st.session_state["chat_history"].append({"role": "user", "content": question})
         with st.spinner("Thinking..."):
             try:
                 answer, backend = answer_portfolio_question(
-                    question, st.session_state.get("results_context", ""), st.session_state["chat_history"][:-1],
+                    question, st.session_state.get("results_context", ""), llm_history,
                     st.session_state.get("news_chunks"),
                 )
-                st.session_state["chat_history"].append({"role": "assistant", "content": f"{answer}\n\n*Generated by: {backend}*"})
+                st.session_state["chat_history"].append(
+                    {"role": "assistant", "content": answer, "caption": f"Generated by: {backend}"}
+                )
             except LLMUnavailableError as exc:
-                st.session_state["chat_history"].append({"role": "assistant", "content": f"⚠️ LLM unavailable: {exc}"})
+                st.session_state["chat_history"].append(
+                    {"role": "assistant", "content": f"⚠️ LLM unavailable: {exc}", "error": True}
+                )
         # Cap history length — keep only the most recent turns (see
         # config.MAX_CHAT_HISTORY_MESSAGES's own comment for why this exists).
         st.session_state["chat_history"] = st.session_state["chat_history"][-MAX_CHAT_HISTORY_MESSAGES:]
@@ -1497,7 +1549,7 @@ def main() -> None:
         with sub_macro:
             macro_context = render_macro_panel()
         with sub_prices:
-            render_overview_tab(prices, config["tickers"], periods_per_year)
+            render_overview_tab(prices, config["tickers"], periods_per_year, config["risk_free_rate"])
 
     with tab_frontier:
         weights = render_frontier_tab(

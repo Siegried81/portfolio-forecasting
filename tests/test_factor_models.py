@@ -66,3 +66,13 @@ def test_pca_factor_cov_scales_with_periods_per_year():
     cov_weekly, _ = pca_factor_cov(returns, n_factors=3, periods_per_year=52)
     ratio = cov_daily.values / cov_weekly.values
     assert np.allclose(ratio, 252 / 52, atol=1e-6)
+
+
+def test_pca_factor_cov_feasibility_cap_wins_over_min_factors_floor():
+    # Two assets support at most one factor; the MIN_PCA_FACTORS floor of 2
+    # must not turn the factor model into the plain sample covariance.
+    returns = _synthetic_factor_returns(n_obs=200, n_assets=2, n_true_factors=1, seed=7)
+    cov, diagnostics = pca_factor_cov(returns, n_factors=10, periods_per_year=252)
+    assert diagnostics["n_factors_used"] == 1
+    sample_var = returns.var(ddof=1).values * 252
+    assert np.allclose(np.diag(cov.values), sample_var, rtol=1e-6)

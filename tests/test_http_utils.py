@@ -66,3 +66,16 @@ def test_safe_get_json_never_raises_even_with_a_context_label(monkeypatch):
         raise requests.RequestException("down")
     monkeypatch.setattr(http_utils.requests, "get", _raise)
     assert safe_get_json("http://example.com", context="DGS10") is None
+
+def test_safe_get_json_never_logs_the_api_key(monkeypatch, caplog):
+    def _raise(*a, **k):
+        raise requests.HTTPError(
+            "400 Client Error: Bad Request for url: "
+            "https://api.stlouisfed.org/fred/series/observations?series_id=DGS10&api_key=super-secret-fred-key"
+        )
+
+    monkeypatch.setattr(http_utils.requests, "get", _raise)
+    with caplog.at_level("WARNING", logger="src.http_utils"):
+        assert safe_get_json("https://api.stlouisfed.org/fred/series/observations", context="DGS10") is None
+    assert "super-secret-fred-key" not in caplog.text
+    assert "api_key=***REDACTED***" in caplog.text

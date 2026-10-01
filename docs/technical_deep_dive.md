@@ -27,7 +27,7 @@ Computed in `src/metrics.py` (unit-tested in `tests/test_metrics.py`) unless not
 |---|---|---|
 | Sharpe | `(mean(r−rf_period)/std(r−rf_period)) × √n` | Above 1 generally good, above 2 very good. Penalises upside volatility exactly as much as downside. |
 | Sharpe SE | `√((1+0.5×SR_period²)/n)`, annualised (Lo, 2002) | Standard error of the Sharpe estimate itself — a rough 95% range is `Sharpe ± 1.96×SE`. Puts a real number behind "a Sharpe of 5.89 on 30 periods isn't reliable" instead of just an appeal to intuition. |
-| Sortino | Same, denominator = downside deviation only (`√(mean((r−rf_period)² \| r−rf_period<0))`) | Sortino ≥ Sharpe is normal for equities — only downside swings count against it. |
+| Sortino | Same, denominator = downside deviation only (`√(mean(min(r−rf_period, 0)²))`, averaged over **all** periods, per Sortino & Price — averaging over losing periods only would overstate it) | Sortino ≥ Sharpe is normal for equities — only downside swings count against it. |
 | Calmar | `annual_return / \|max_drawdown\|` | Penalises only the single *worst* outcome lived through, not the whole spread — the number a risk committee asks for. |
 | Omega | `Σ(r−threshold \| r>threshold) / \|Σ(r−threshold \| r<threshold)\|` | Uses the *entire* empirical distribution, so it diverges from Sharpe/Sortino exactly when returns are skewed/fat-tailed. `∞` (shown `—`) = zero losing periods in the sample. |
 | Skewness / Kurtosis | 3rd / 4th standardised moments of `r` | Skew: 0 symmetric, negative = fatter *left* tail (large losses — the typical equity shape). Kurtosis (pandas excess convention): 0 = normal tails, positive = fatter than normal. |
@@ -496,7 +496,11 @@ stays consistent.
 rebalance)", default 10 bps. Charged as `turnover × cost rate` at every point a portfolio
 actually rebalances: once for the initial trade in the single-window comparison, and at every
 walk-forward window boundary — tracked independently per portfolio type against ITS OWN previous
-weights, not a shared reference. "Rebalancing frequency" surfaces through the existing forecast
+weights, not a shared reference. Between rebalances each portfolio is bought and held, so its
+weights drift with prices (`buy_and_hold_returns()`), and the next rebalance is charged on the
+move from those drifted weights to the new targets: the returns and the costs describe the same
+once-per-window strategy, rather than returns that silently assume a rebalance every period while
+only the window boundary is charged. "Rebalancing frequency" surfaces through the existing forecast
 horizon control rather than a separate parameter: a shorter horizon means more walk-forward
 windows over the same history, i.e. more frequent rebalancing, i.e. more cumulative cost drag —
 shortening the horizon is how to see this effect directly. Set the cost to 0 for the frictionless

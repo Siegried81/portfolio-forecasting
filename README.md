@@ -127,7 +127,7 @@ a genuinely new, finance-relevant data point (a real macro rate) instead of a re
 pytest tests/ -v
 ```
 
-367 tests across 19 files, all passing — `mypy --strict` is also clean on every file in `src/`.
+454 tests across 19 files, all passing — `mypy --strict` is also clean on every file in `src/`.
 
 ### Check your environment
 

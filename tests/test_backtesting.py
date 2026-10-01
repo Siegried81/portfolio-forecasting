@@ -17,6 +17,7 @@ from src.backtesting import (
     generate_expanding_windows,
     run_walk_forward,
     summarise_walk_forward,
+    tickers_with_training_history,
 )
 
 
@@ -297,3 +298,56 @@ def test_compare_to_previous_period_runs_end_to_end_on_a_real_walk_forward_resul
     assert len(comparison) == len(results)
     first_windows = comparison[comparison["window"] == comparison["window"].min()]
     assert first_windows["sharpe_ratio_previous"].isna().all()
+
+
+def test_run_walk_forward_handles_an_asset_listed_after_the_first_window():
+    # CCC has no prices before period 150, so window 1 (training ends at 100)
+    # cannot use it; later windows must pick it up once it has enough history.
+    tickers = ["AAA", "BBB", "CCC"]
+    prices = _synthetic_prices(400, tickers, seed=8)
+    prices.iloc[:150, 2] = np.nan
+    results = run_walk_forward(
+        prices, tickers, horizon=60, n_windows=5, forecast_model="Naive (random walk)",
+        risk_free_rate=0.04, periods_per_year=252, min_train_periods=100, transaction_cost_bps=10,
+    )
+    n_assets = results.groupby("window")["n_assets"].first()
+    assert n_assets.loc[1] == 2
+    assert n_assets.iloc[-1] == 3
+    assert results["annual_volatility"].notna().all()
+
+
+def test_tickers_with_training_history_uses_the_given_minimum():
+    prices = _synthetic_prices(120, ["AAA", "BBB"], seed=9)
+    prices.iloc[:60, 1] = np.nan  # BBB has 60 training prices
+    assert tickers_with_training_history(prices, ["AAA", "BBB"]) == ["AAA", "BBB"]
+    assert tickers_with_training_history(prices, ["AAA", "BBB"], min_periods=90) == ["AAA"]
+
+
+def test_run_walk_forward_admits_a_late_asset_only_with_a_full_first_window_of_history():
+    """The covariance uses the periods every asset shares, so a newcomer with
+    70 prices would shrink the others' sample: it waits for min_train_periods."""
+    tickers = ["AAA", "BBB", "CCC"]
+    prices = _synthetic_prices(400, tickers, seed=8)
+    prices.iloc[:150, 2] = np.nan
+    results = run_walk_forward(
+        prices, tickers, horizon=60, n_windows=5, forecast_model="Naive (random walk)",
+        risk_free_rate=0.04, periods_per_year=252, min_train_periods=100,
+    )
+    n_assets = results.groupby("window")["n_assets"].first()
+    assert list(n_assets) == [2, 2, 2, 3, 3]  # CCC: 10, 70, 130, 190 training prices
+
+
+def test_run_walk_forward_charges_the_trade_back_from_drifted_weights(monkeypatch):
+    """Same 50/50 target every window: a held portfolio drifts away from it, so
+    each rebalance after the first costs something. Charging target-to-target
+    turnover (zero here) priced the strategy as if it were frictionless."""
+    import src.backtesting as backtesting
+
+    monkeypatch.setattr(backtesting, "optimize_max_sharpe", lambda mu, *a, **k: pd.Series(0.5, index=mu.index))
+    prices = _synthetic_prices(300, ["AAA", "BBB"], seed=10)
+    kwargs = dict(prices=prices, tickers=["AAA", "BBB"], horizon=50, n_windows=3, forecast_model="Naive (random walk)",
+                  risk_free_rate=0.0, periods_per_year=252, min_train_periods=100)
+    free = run_walk_forward(**kwargs, transaction_cost_bps=0)
+    costly = run_walk_forward(**kwargs, transaction_cost_bps=50)
+    later = free["window"] > 1
+    assert (costly.loc[later, "annual_return"] < free.loc[later, "annual_return"]).all()

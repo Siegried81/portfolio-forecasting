@@ -74,8 +74,30 @@ def historical_mu_cov(
         # alignment by position, not by label, in several internal steps).
         cov = cov.reindex(index=mu.index, columns=mu.index)
     else:
-        cov = risk_models.CovarianceShrinkage(prices, frequency=periods_per_year).ledoit_wolf()
+        cov = ledoit_wolf_cov(prices, periods_per_year)
     return mu, cov
+
+
+def ledoit_wolf_cov(prices: pd.DataFrame, periods_per_year: int = TRADING_DAYS_PER_YEAR) -> pd.DataFrame:
+    """
+    Annualised Ledoit-Wolf shrinkage covariance, estimated only on the periods
+    where EVERY asset has a return.
+
+    Why not hand `prices` straight to PyPortfolioOpt: its `ledoit_wolf()`
+    replaces missing returns with 0.0 (`np.nan_to_num`) before estimating. An
+    asset listed later than the others has leading NaNs, so its pre-listing
+    periods would count as days of zero return, understating its volatility
+    and pulling its correlations toward zero in proportion to how much of the
+    window it was missing. That makes a late-listed asset look safer than it is
+    and invites the optimizer to overweight it. Restricting to the overlapping
+    periods is the same choice `factor_models.pca_factor_cov` makes, so both
+    covariance estimators see the same sample. With complete data this is
+    identical to the previous call.
+    """
+    returns = prices.pct_change(fill_method=None).dropna(how="any")
+    return risk_models.CovarianceShrinkage(
+        returns, returns_data=True, frequency=periods_per_year,
+    ).ledoit_wolf()
 
 
 def forecast_mu(
@@ -239,11 +261,16 @@ def efficient_frontier_points(
     ef_minvol.min_volatility()
     min_vol_return, min_vol_vol, _ = ef_minvol.portfolio_performance()
 
-    max_return = mu.max()
+    max_return = _max_achievable_return(mu, cov, weight_bounds)
     if len(mu) < 2 or max_return <= min_vol_return:
         return pd.DataFrame([{"return": min_vol_return, "volatility": min_vol_vol}])
 
-    target_returns = np.linspace(min_vol_return, max_return * 0.999, n_points)
+    # Stop just short of the maximum: the max-return portfolio is a vertex of
+    # the feasible set, where the solver can report the target as infeasible
+    # by rounding. Shrinking the RANGE (not multiplying max_return by 0.999)
+    # stays correct when max_return is negative or close to min_vol_return.
+    upper_target = min_vol_return + (max_return - min_vol_return) * 0.999
+    target_returns = np.linspace(min_vol_return, upper_target, n_points)
 
     points = []
     for target in target_returns:
@@ -256,6 +283,28 @@ def efficient_frontier_points(
             continue  # infeasible target on this grid point — skip, keep the rest
 
     return pd.DataFrame(points)
+
+
+def _max_achievable_return(
+    mu: pd.Series, cov: pd.DataFrame, weight_bounds: tuple[float, float],
+) -> float:
+    """
+    Highest expected return any fully-invested portfolio can reach under
+    `weight_bounds` — the top end of the frontier sweep.
+
+    `mu.max()` is only the right ceiling when one asset may hold 100%. With a
+    per-asset cap (e.g. 30%), the best feasible portfolio is a capped blend
+    whose return is well below the single best asset, so sweeping up to
+    `mu.max()` asks for mostly infeasible targets and leaves only a few points
+    at the low end of the frontier. With short-selling it can be the other
+    way round (shorting the worst asset funds more of the best). This solves
+    the bounded max-return linear program instead (PyPortfolioOpt's own
+    `_max_return`), falling back to `mu.max()` if the solver fails.
+    """
+    try:
+        return float(EfficientFrontier(mu, cov, weight_bounds=weight_bounds)._max_return())
+    except (OptimizationError, ValueError):
+        return float(mu.max())
 
 
 def portfolio_performance(

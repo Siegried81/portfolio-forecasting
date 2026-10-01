@@ -141,3 +141,20 @@ def test_sp500_sector_universe_has_no_duplicate_ticker_across_sectors():
         for t in tickers:
             assert t not in seen, f"{t} appears in more than one GICS sector"
             seen.add(t)
+
+
+def test_horizon_bounds_cover_every_frequency_with_a_consistent_range():
+    assert set(config.HORIZON_BOUNDS_BY_FREQUENCY) == set(FREQUENCY_TO_PERIODS_PER_YEAR)
+    for low, high, default, step in config.HORIZON_BOUNDS_BY_FREQUENCY.values():
+        assert 1 <= low <= default <= high and step >= 1
+
+
+def test_yearly_horizon_fits_in_the_longest_quick_range():
+    """10-90 yearly periods could never be held out of at most 15 years of data."""
+    low, _, default, _ = config.HORIZON_BOUNDS_BY_FREQUENCY["yearly"]
+    longest_years = max(QUICK_DATE_RANGES.values()) / 365
+    assert default < longest_years and low < longest_years
+
+
+def test_quick_date_ranges_contain_the_app_default():
+    assert "5 years" in QUICK_DATE_RANGES  # app.py's start-date default reads this key

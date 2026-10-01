@@ -98,3 +98,14 @@ def test_garch_forecast_cov_scales_with_periods_per_year():
     cov_weekly, _ = garch_forecast_cov(prices, horizon_periods=30, periods_per_year=52)
     ratio = cov_daily.values / cov_weekly.values
     assert np.allclose(ratio, 252 / 52, atol=1e-6)
+
+
+def test_garch_forecast_cov_correlation_ignores_a_late_listed_assets_missing_history():
+    # Missing pre-listing periods must not count as zero returns, which would
+    # pull the late asset's correlation with the others toward zero.
+    prices = _price_panel(600, ["AAA", "BBB"], seed=9, correlated=True)
+    prices.iloc[:300, 1] = np.nan
+    cov, _ = garch_forecast_cov(prices, horizon_periods=20, periods_per_year=252)
+    corr = cov.loc["AAA", "BBB"] / np.sqrt(cov.loc["AAA", "AAA"] * cov.loc["BBB", "BBB"])
+    returns = prices.pct_change(fill_method=None).dropna(how="any")
+    assert corr == pytest.approx(returns["AAA"].corr(returns["BBB"]), abs=0.05)

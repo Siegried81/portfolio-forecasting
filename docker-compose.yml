@@ -7,7 +7,9 @@ services:
     ports:
       - "8501:8501"
     env_file:
-      - .env
+      # Optional: every key is optional (see README), so a missing .env must not stop the stack.
+      - path: .env
+        required: false
     environment:
       STREAMLIT_SERVER_HEADLESS: "true"
       STREAMLIT_SERVER_ADDRESS: "0.0.0.0"
