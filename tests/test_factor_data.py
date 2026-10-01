@@ -173,3 +173,27 @@ def test_compute_factor_exposures_alpha_near_zero_when_return_is_pure_factor_exp
     portfolio_returns = factors["RF"] + 1.0 * factors["Mkt-RF"]
     result = compute_factor_exposures(portfolio_returns, factors)
     assert result["alpha_annualised"] == pytest.approx(0.0, abs=0.05)
+
+
+def _compound_weekly(daily: pd.Series) -> pd.Series:
+    return (1.0 + daily).resample("W-FRI").prod() - 1.0
+
+
+def test_compute_factor_exposures_compounds_daily_factors_for_weekly_returns():
+    """A weekly portfolio return must be regressed on that week's factor returns.
+    Joining on dates alone paired it with the factors of its last day only."""
+    factors = _synthetic_factors(600, seed=11)
+    weekly_portfolio = _compound_weekly(factors["RF"] + 1.5 * factors["Mkt-RF"])
+    result = compute_factor_exposures(weekly_portfolio, factors, periods_per_year=52)
+    assert result is not None
+    assert result["loadings"]["Mkt-RF"] == pytest.approx(1.5, abs=0.05)
+    assert result["r_squared"] > 0.95
+    assert result["n_obs"] == len(weekly_portfolio) - 1  # the first week's start is unknown
+
+
+def test_compute_factor_exposures_daily_path_is_unchanged():
+    factors = _synthetic_factors(300, seed=12)
+    portfolio_returns = factors["RF"] + 1.2 * factors["Mkt-RF"]
+    result = compute_factor_exposures(portfolio_returns, factors, periods_per_year=252)
+    assert result["n_obs"] == 300
+    assert result["loadings"]["Mkt-RF"] == pytest.approx(1.2, abs=0.01)

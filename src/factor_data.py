@@ -170,6 +170,25 @@ def fetch_fama_french_factors(model: str = "3-factor") -> pd.DataFrame | None:
     return df.dropna(how="all")
 
 
+def _compound_factors_to_periods(factors: pd.DataFrame, period_ends: pd.DatetimeIndex) -> pd.DataFrame:
+    """
+    Compound daily factor returns over each portfolio period (t[i-1], t[i]],
+    labelled t[i]. A weekly or monthly portfolio return must be regressed on the
+    factor returns of that same week or month: joining on dates alone paired it
+    with the factors of its last DAY only. The market is compounded as
+    Mkt = (Mkt-RF) + RF and RF separately, then differenced, which is how the
+    Data Library builds its own weekly/monthly files. The first period is
+    dropped because its start is unknown here.
+    """
+    period_ends = period_ends.sort_values()
+    daily = factors[(factors.index > period_ends[0]) & (factors.index <= period_ends[-1])].copy()
+    daily["_mkt"] = daily["Mkt-RF"] + daily["RF"]
+    labels = period_ends[period_ends.searchsorted(daily.index, side="left")]
+    compounded = (1.0 + daily).groupby(labels).prod() - 1.0
+    compounded["Mkt-RF"] = compounded["_mkt"] - compounded["RF"]
+    return compounded.drop(columns="_mkt")
+
+
 def compute_factor_exposures(
     portfolio_returns: pd.Series,
     factors: pd.DataFrame,
@@ -211,6 +230,11 @@ def compute_factor_exposures(
     if len(factor_columns) < len(THREE_FACTOR_COLUMNS) or "RF" not in factors.columns:
         logger.warning("Fama-French factors DataFrame is missing expected columns; got %s", list(factors.columns))
         return None
+
+    # The factors are daily: at a coarser frequency, compound them per period
+    # first (see _compound_factors_to_periods). Daily data is joined as is.
+    if periods_per_year < TRADING_DAYS_PER_YEAR and len(portfolio_returns) > 1:
+        factors = _compound_factors_to_periods(factors, pd.DatetimeIndex(portfolio_returns.dropna().index))
 
     aligned = pd.concat([portfolio_returns.rename("portfolio"), factors], axis=1, join="inner").dropna()
     if len(aligned) < MIN_OBSERVATIONS_FOR_FACTOR_REGRESSION:

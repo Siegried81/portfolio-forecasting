@@ -163,13 +163,24 @@ MIN_HISTORY_POINTS_FOR_FORECAST: int = 30  # below this, ARIMA/ETS fits are unre
 MIN_HISTORY_POINTS_FOR_LSTM: int = 90
 DEFAULT_FORECAST_HORIZON_DAYS: int = 30
 
+# Forecast-horizon slider bounds per frequency, in periods: (min, max, default, step).
+# Yearly gets its own range: 10-90 YEARS held out (plus the Forecast tab's 30
+# training periods) needed 40+ years of yearly data, so that frequency could never
+# actually run a forecast.
+HORIZON_BOUNDS_BY_FREQUENCY: dict[str, tuple[int, int, int, int]] = {
+    "daily": (10, 90, DEFAULT_FORECAST_HORIZON_DAYS, 5),
+    "weekly": (10, 90, DEFAULT_FORECAST_HORIZON_DAYS, 5),
+    "monthly": (10, 90, DEFAULT_FORECAST_HORIZON_DAYS, 5),
+    "yearly": (1, 10, 2, 1),
+}
+
 # --- Quick date-range presets (sidebar UX) ------------------------------------------
 QUICK_DATE_RANGES: dict[str, int] = {
-    "1 an": 365,
-    "3 ans": 3 * 365,
-    "5 ans": 5 * 365,
-    "10 ans": 10 * 365,
-    "Max (15 ans)": 15 * 365,
+    "1 year": 365,
+    "3 years": 3 * 365,
+    "5 years": 5 * 365,
+    "10 years": 10 * 365,
+    "Max (15 years)": 15 * 365,
 }
 
 # --- Walk-forward (multi-window) backtesting ----------------------------------------

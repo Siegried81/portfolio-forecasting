@@ -81,8 +81,9 @@ def _redact_api_key(text: str) -> str:
     `st.error()` displays verbatim on screen. `requests`' HTTPError includes the
     full request URL (query string and all) in its default __str__ — without
     this, a failed Twelve Data call leaks the API key straight into the UI.
+    Also covers Finnhub's `token=...` param, which carries its key the same way.
     """
-    return re.sub(r"apikey=[^&\s]+", "apikey=***REDACTED***", text)
+    return re.sub(r"(apikey|token)=[^&\s]+", lambda m: f"{m.group(1)}=***REDACTED***", text)
 
 TWELVEDATA_URL = "https://api.twelvedata.com/time_series"
 TWELVEDATA_MAX_ATTEMPTS = 3
@@ -165,6 +166,26 @@ def _download_yfinance(tickers: list[str], start: dt.date, end: dt.date) -> pd.D
 YAHOO_CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart/{ticker}"
 
 
+def _yahoo_timestamps_to_dates(timestamps: list[int], meta: dict[str, Any]) -> pd.DatetimeIndex:
+    """
+    Convert the chart endpoint's epoch-second bar timestamps into naive
+    session dates. Each daily bar is stamped at the exchange's session open,
+    so the date must be read in the EXCHANGE's own timezone (from
+    `meta["exchangeTimezoneName"]`), not in UTC: a Sydney session opening at
+    10:00 AEDT is 23:00 UTC the previous day, and truncating in UTC would
+    shift every such bar one day early. Falls back to UTC (correct for
+    American and European sessions) if the timezone is missing or unknown.
+    """
+    index = pd.to_datetime(timestamps, unit="s", utc=True)
+    tz_name = meta.get("exchangeTimezoneName")
+    if tz_name:
+        try:
+            index = index.tz_convert(tz_name)
+        except Exception as exc:  # unknown tz name — keep UTC rather than drop the data
+            logger.warning("Unknown exchange timezone %r from Yahoo, using UTC dates: %s", tz_name, exc)
+    return index.tz_localize(None).normalize()
+
+
 def _download_yahoo_direct(tickers: list[str], start: dt.date, end: dt.date) -> pd.DataFrame:
     """
     Direct call to Yahoo Finance's own REST API (`v8/finance/chart`) — bypassing
@@ -207,12 +228,22 @@ def _download_yahoo_direct(tickers: list[str], start: dt.date, end: dt.date) -> 
         if not timestamps or not closes:
             continue
 
-        series = pd.Series(closes, index=pd.to_datetime(timestamps, unit="s").normalize(), name=ticker)
+        series = pd.Series(closes, index=_yahoo_timestamps_to_dates(timestamps, result.get("meta") or {}), name=ticker)
         columns[ticker] = series.dropna()
 
     if not columns:
         raise MarketDataError("Direct Yahoo Finance API also returned no data for any ticker.")
     return pd.concat(columns, axis=1)
+
+
+def _is_twelvedata_rate_limited(payload: Any) -> bool:
+    """
+    True if a Twelve Data JSON body is a rate-limit / credit-exhaustion error.
+    Twelve Data usually reports this as HTTP 200 with `{"code": 429,
+    "status": "error"}` in the body rather than as an HTTP 429 status, so a
+    retry keyed only on the HTTP status would never fire for it.
+    """
+    return isinstance(payload, dict) and payload.get("code") == 429
 
 
 def _download_twelvedata(tickers: list[str], start: dt.date, end: dt.date) -> pd.DataFrame:
@@ -238,22 +269,21 @@ def _download_twelvedata(tickers: list[str], start: dt.date, end: dt.date) -> pd
         "adjusted": "true",
     }
     try:
-        response = requests.get(TWELVEDATA_URL, params=params, timeout=15)
         payload = None
         for attempt in range(1, TWELVEDATA_MAX_ATTEMPTS + 1):
-            if response.status_code == 429:
-                if attempt == TWELVEDATA_MAX_ATTEMPTS:
-                    raise MarketDataError(
-                        "Twelve Data rate limit hit (free tier: 8 req/min, 800/day). "
-                        "Wait ~60s and retry — this is usually transient, not a quota exhaustion."
-                    )
-                logger.warning("Twelve Data 429, retrying in %.0fs (attempt %d/%d)", TWELVEDATA_BACKOFF_SECONDS * attempt, attempt, TWELVEDATA_MAX_ATTEMPTS)
-                time.sleep(TWELVEDATA_BACKOFF_SECONDS * attempt)
-                response = requests.get(TWELVEDATA_URL, params=params, timeout=15)
-                continue
-            response.raise_for_status()
-            payload = response.json()
-            break
+            response = requests.get(TWELVEDATA_URL, params=params, timeout=15)
+            if response.status_code != 429:
+                response.raise_for_status()
+                payload = response.json()
+                if not _is_twelvedata_rate_limited(payload):
+                    break
+            if attempt == TWELVEDATA_MAX_ATTEMPTS:
+                raise MarketDataError(
+                    "Twelve Data rate limit hit (free tier: 8 req/min, 800/day). "
+                    "Wait ~60s and retry — this is usually transient, not a quota exhaustion."
+                )
+            logger.warning("Twelve Data 429, retrying in %.0fs (attempt %d/%d)", TWELVEDATA_BACKOFF_SECONDS * attempt, attempt, TWELVEDATA_MAX_ATTEMPTS)
+            time.sleep(TWELVEDATA_BACKOFF_SECONDS * attempt)
     except (requests.RequestException, ValueError) as exc:
         raise MarketDataError(f"Twelve Data request failed: {_redact_api_key(str(exc))}") from exc
 
@@ -269,9 +299,21 @@ def _download_twelvedata(tickers: list[str], start: dt.date, end: dt.date) -> pd
     # rather than keeping it as an error-tagged key — so shape is detected
     # from "values"/"meta" presence, never from whether every requested
     # ticker is present in the payload.
-    per_ticker: dict[str, dict[str, Any]] = (
-        {tickers[0]: payload} if ("values" in payload or "meta" in payload) else payload
-    )
+    # A flat payload is attributed to the symbol its own `meta` names, not
+    # blindly to tickers[0]: if a multi-ticker batch ever collapses to a
+    # single surviving symbol, that symbol's prices must not be filed under a
+    # different ticker. Only a single-ticker request may fall back to
+    # tickers[0] when `meta.symbol` is absent or spelled differently.
+    if "values" in payload or "meta" in payload:
+        meta_symbol = (payload.get("meta") or {}).get("symbol")
+        if meta_symbol in tickers:
+            per_ticker: dict[str, dict[str, Any]] = {meta_symbol: payload}
+        elif len(tickers) == 1:
+            per_ticker = {tickers[0]: payload}
+        else:
+            per_ticker = {}
+    else:
+        per_ticker = payload
 
     columns = {}
     for ticker in tickers:
@@ -458,14 +500,20 @@ def fetch_adjusted_close(
     even though the previous attempt (seconds ago) already proved it's down.
     Once both Yahoo paths fail, `_yahoo_down_until` records "don't bother
     retrying Yahoo before this time" — subsequent calls within that window skip
-    straight to Twelve Data. A real responsiveness fix, not just log noise
-    reduction: a user rapidly toggling tickers while Yahoo is down would
-    otherwise hit the full multi-second retry chain on every click.
+    straight to the non-Yahoo tail (Tiingo -> Twelve Data -> Alpha Vantage). A
+    real responsiveness fix, not just log noise reduction: a user rapidly
+    toggling tickers while Yahoo is down would otherwise hit the full
+    multi-second retry chain on every click.
 
-    Returns a DataFrame indexed by date, one column per ticker, forward-filled for
-    isolated missing sessions (holidays that differ slightly across exchanges/ETFs)
-    but NOT filled at the edges - leading/trailing NaNs are dropped so every column
-    only spans dates where it actually traded.
+    Returns a DataFrame indexed by date, one column per ticker. Missing
+    sessions are forward-filled from the last known price — interior gaps
+    (holidays that differ across exchanges/ETFs) AND trailing ones (a ticker
+    whose latest session isn't published yet carries its last price forward).
+    Leading NaNs are NOT filled: a ticker that started trading after `start`
+    stays NaN before its first price. Rows where every ticker is NaN are
+    dropped. A ticker whose column is entirely NaN (yfinance keeps a failed
+    symbol in a multi-ticker download as an all-NaN column) is treated as
+    missing and raises MarketDataError, like a ticker absent altogether.
     """
     if not tickers:
         raise MarketDataError("No tickers provided.")
@@ -475,7 +523,7 @@ def fetch_adjusted_close(
 
     source = "yfinance"
     if skip_yahoo:
-        logger.info("Yahoo circuit breaker active (down recently) — skipping straight to Twelve Data.")
+        logger.info("Yahoo circuit breaker active (down recently) — skipping straight to the non-Yahoo fallbacks.")
         prices, tier = _download_post_yahoo_fallback_chain(tickers, start, end)
         source = f"{tier} (yahoo recently unavailable)"
     else:
@@ -494,11 +542,15 @@ def fetch_adjusted_close(
                 prices = _download_yahoo_direct(tickers, start, end)
                 source = "yahoo direct API"
             except MarketDataError as yahoo_direct_error:
-                logger.warning("Direct Yahoo API also failed, falling back to Twelve Data: %s", yahoo_direct_error)
+                logger.warning("Direct Yahoo API also failed, falling back to Tiingo/Twelve Data/Alpha Vantage: %s", yahoo_direct_error)
                 _yahoo_down_until = time.monotonic() + YAHOO_CIRCUIT_BREAKER_SECONDS
                 prices, tier = _download_post_yahoo_fallback_chain(tickers, start, end)
                 source = f"{tier} (yahoo unavailable)"
 
+    # An all-NaN column means the source returned no prices for that ticker
+    # (yfinance keeps failed symbols as NaN columns); drop it so the check
+    # below reports it instead of passing an empty series downstream.
+    prices = prices.dropna(axis=1, how="all")
     missing = set(tickers) - set(prices.columns)
     if missing:
         raise MarketDataError(f"No data for: {', '.join(sorted(missing))} (source: {source}). Check the ticker symbols.")
@@ -589,20 +641,21 @@ def _fetch_twelvedata_fundamentals(ticker: str) -> dict[str, Any] | None:
             logger.warning("Twelve Data fundamentals request failed for %s: %s", ticker, _redact_api_key(str(exc)))
             return None
 
-        if response.status_code == 429:
-            if attempt == TWELVEDATA_MAX_ATTEMPTS:
-                logger.warning("Twelve Data fundamentals rate-limited for %s after %d attempts", ticker, attempt)
+        payload = None
+        if response.status_code != 429:
+            try:
+                response.raise_for_status()
+                payload = response.json()
+            except (requests.RequestException, ValueError) as exc:
+                logger.warning("Twelve Data fundamentals request failed for %s: %s", ticker, _redact_api_key(str(exc)))
                 return None
-            time.sleep(TWELVEDATA_BACKOFF_SECONDS * attempt)
-            continue
+            if not _is_twelvedata_rate_limited(payload):
+                break
 
-        try:
-            response.raise_for_status()
-            payload = response.json()
-        except (requests.RequestException, ValueError) as exc:
-            logger.warning("Twelve Data fundamentals request failed for %s: %s", ticker, _redact_api_key(str(exc)))
+        if attempt == TWELVEDATA_MAX_ATTEMPTS:
+            logger.warning("Twelve Data fundamentals rate-limited for %s after %d attempts", ticker, attempt)
             return None
-        break
+        time.sleep(TWELVEDATA_BACKOFF_SECONDS * attempt)
     else:
         return None
 
@@ -666,7 +719,7 @@ def _fetch_finnhub_fundamentals(ticker: str) -> dict[str, Any] | None:
         profile = profile_resp.json()
         metric = (metric_resp.json() or {}).get("metric", {}) or {}
     except (requests.RequestException, ValueError) as exc:
-        logger.warning("Finnhub fundamentals request failed for %s: %s", ticker, exc)
+        logger.warning("Finnhub fundamentals request failed for %s: %s", ticker, _redact_api_key(str(exc)))
         return None
 
     if not profile and not metric:

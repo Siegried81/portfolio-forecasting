@@ -24,6 +24,7 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.backtesting import run_walk_forward  # noqa: E402
+from src.forecasting import FORECAST_MODELS  # noqa: E402
 from src.config import (  # noqa: E402
     COV_METHOD_GARCH,
     COV_METHOD_LEDOIT_WOLF,
@@ -117,7 +118,10 @@ def run_one_scenario(scenario: Scenario, horizon: int = 90) -> BenchmarkResult:
 
 
 def build_grid(quick: bool) -> list[Scenario]:
-    """--quick skips ARIMA and the 40-asset PCA case."""
+    """--quick runs only Naive/ETS on 5-15 assets; the full grid covers every
+    forecasting model (including ML regression and the LSTM, whose docstrings
+    point here for timings) with and without GARCH covariance, plus the
+    40-asset PCA case."""
     if quick:
         return [
             Scenario(n_assets=5, n_windows=6, forecast_model="Naive (random walk)", forecast_cov_method=None, cov_method=COV_METHOD_LEDOIT_WOLF),
@@ -127,7 +131,7 @@ def build_grid(quick: bool) -> list[Scenario]:
 
     scenarios: list[Scenario] = []
     for n_assets, cov_method in [(5, COV_METHOD_LEDOIT_WOLF), (15, COV_METHOD_LEDOIT_WOLF), (40, COV_METHOD_PCA)]:
-        for forecast_model in ["Naive (random walk)", "ETS (Holt linear trend)", "Theta method", "ARIMA (auto order)"]:
+        for forecast_model in FORECAST_MODELS:
             for forecast_cov_method in [None, COV_METHOD_GARCH]:
                 scenarios.append(
                     Scenario(
@@ -143,7 +147,7 @@ def build_grid(quick: bool) -> list[Scenario]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--quick", action="store_true", help="Fast subset — Naive/ETS only, no ARIMA, no 40-asset case.")
+    parser.add_argument("--quick", action="store_true", help="Fast subset — Naive/ETS only, no 40-asset case.")
     parser.add_argument("--csv", type=Path, default=None, help="Also write results to this CSV path.")
     args = parser.parse_args()
 

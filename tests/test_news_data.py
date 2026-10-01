@@ -61,12 +61,24 @@ def _hit(cik: str | None, accession_id: str | None, display_name: str = "Apple I
     return hit
 
 
+def _sec_get(search_payload: dict, ticker_map: dict | None = None):
+    """Fake requests.get for EDGAR: SEC's ticker map (AAPL -> 320193 unless
+    given) for the CIK lookup, `search_payload` for the full-text search."""
+    ticker_map = ticker_map if ticker_map is not None else {"0": {"cik_str": 320193, "ticker": "AAPL", "title": "Apple Inc."}}
+
+    def _fake_get(url, **kwargs):
+        if url == news_data.SEC_COMPANY_TICKERS_URL:
+            return _FakeResponse(ticker_map)
+        return _FakeResponse(search_payload)
+    return _fake_get
+
+
 def test_fetch_sec_filings_links_directly_to_the_specific_filing(monkeypatch):
     # `accession` must be used to build a direct link to the specific filing,
     # not just fall back to the generic per-company browse page regardless
     # of which filing was actually found.
     payload = _edgar_payload([_hit(cik="0000320193", accession_id="0000320193-26-000106:aapl-20260815.htm")])
-    monkeypatch.setattr(news_data.requests, "get", lambda *a, **k: _FakeResponse(payload))
+    monkeypatch.setattr(news_data.requests, "get", _sec_get(payload))
 
     results = fetch_sec_filings("Apple Inc.", "AAPL")
 
@@ -80,20 +92,20 @@ def test_fetch_sec_filings_falls_back_to_generic_company_page_without_accession(
     # _id missing/empty -> no accession to build a direct link from; cik alone
     # should still produce the per-company browse page, not crash or link nowhere.
     payload = _edgar_payload([_hit(cik="0000320193", accession_id=None)])
-    monkeypatch.setattr(news_data.requests, "get", lambda *a, **k: _FakeResponse(payload))
+    monkeypatch.setattr(news_data.requests, "get", _sec_get(payload))
 
     results = fetch_sec_filings("Apple Inc.", "AAPL")
 
     assert results[0]["url"] == "https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=320193"
 
 
-def test_fetch_sec_filings_falls_back_to_generic_search_without_cik(monkeypatch):
+def test_fetch_sec_filings_drops_a_hit_whose_filer_cannot_be_verified(monkeypatch):
+    # A hit without `ciks` cannot be matched to the ticker's CIK, so it may be
+    # another company's filing: dropped rather than attributed to AAPL.
     payload = _edgar_payload([_hit(cik=None, accession_id="0000320193-26-000106:aapl-20260815.htm")])
-    monkeypatch.setattr(news_data.requests, "get", lambda *a, **k: _FakeResponse(payload))
+    monkeypatch.setattr(news_data.requests, "get", _sec_get(payload))
 
-    results = fetch_sec_filings("Apple Inc.", "AAPL")
-
-    assert results[0]["url"] == "https://www.sec.gov/edgar/search/"
+    assert fetch_sec_filings("Apple Inc.", "AAPL") == []
 
 
 def test_fetch_sec_filings_returns_empty_list_on_request_failure(monkeypatch):
@@ -108,7 +120,7 @@ def test_fetch_sec_filings_returns_empty_list_on_request_failure(monkeypatch):
 
 def test_fetch_sec_filings_respects_max_filings(monkeypatch):
     payload = _edgar_payload([_hit(cik="0000320193", accession_id=f"000032019326-00{i:04d}:x.htm") for i in range(5)])
-    monkeypatch.setattr(news_data.requests, "get", lambda *a, **k: _FakeResponse(payload))
+    monkeypatch.setattr(news_data.requests, "get", _sec_get(payload))
 
     results = fetch_sec_filings("Apple Inc.", "AAPL", max_filings=2)
     assert len(results) == 2
@@ -179,21 +191,29 @@ def test_fetch_sec_filings_filters_out_an_unrelated_company_matching_by_name_onl
     assert "Apple Inc." in results[0]["title"]
 
 
-def test_fetch_sec_filings_skips_the_cik_filter_when_the_lookup_fails(monkeypatch):
-    # If the CIK lookup itself fails (network issue), filtering must be
-    # skipped entirely — this must never return FEWER results than before
-    # the fix, only more accurate ones when the lookup succeeds.
+def test_fetch_sec_filings_returns_nothing_when_the_cik_lookup_fails(monkeypatch):
+    # Without a verified CIK the name search cannot tell this company's
+    # filings from another one's, so nothing is returned (and nothing searched).
     import requests as requests_module
-    search_payload = _edgar_payload([_hit(cik="0000320193", accession_id="0000320193-26-000106:aapl.htm")])
+    searched = []
 
     def _fake_get(url, **kwargs):
         if url == news_data.SEC_COMPANY_TICKERS_URL:
             raise requests_module.RequestException("network down")
-        return _FakeResponse(search_payload)
+        searched.append(url)
+        return _FakeResponse(_edgar_payload([_hit(cik="0000320193", accession_id="0000320193-26-000106:aapl.htm")]))
 
     monkeypatch.setattr(news_data.requests, "get", _fake_get)
-    results = fetch_sec_filings("Apple Inc.", "AAPL")
-    assert len(results) == 1
+    assert fetch_sec_filings("Apple Inc.", "AAPL") == []
+    assert searched == []
+
+
+def test_fetch_sec_filings_returns_nothing_for_a_ticker_sec_does_not_list(monkeypatch):
+    # MC.PA (LVMH) files with the AMF, not the SEC: a name search would only
+    # surface other companies' filings that mention "LVMH".
+    other_company = _edgar_payload([_hit(cik="0000012345", accession_id="0000012345-26-000001:x.htm", display_name="Some US Retailer")])
+    monkeypatch.setattr(news_data.requests, "get", _sec_get(other_company))
+    assert fetch_sec_filings("LVMH", "MC.PA") == []
 
 
 def test_fetch_sec_filings_dedupes_duplicate_accession_numbers(monkeypatch):
@@ -202,7 +222,7 @@ def test_fetch_sec_filings_dedupes_duplicate_accession_numbers(monkeypatch):
     dup_hit = _hit(cik="0000320193", accession_id="0000320193-26-000106:aapl.htm")
     other_hit = _hit(cik="0000320193", accession_id="0000320193-26-000107:aapl2.htm")
     payload = _edgar_payload([dup_hit, dup_hit, other_hit])
-    monkeypatch.setattr(news_data.requests, "get", lambda *a, **k: _FakeResponse(payload))
+    monkeypatch.setattr(news_data.requests, "get", _sec_get(payload))
 
     results = fetch_sec_filings("Apple Inc.", "AAPL", max_filings=5)
     assert len(results) == 2
@@ -215,10 +235,12 @@ def test_fetch_sec_filings_dedupes_duplicate_accession_numbers(monkeypatch):
 def test_fetch_sec_insider_trades_requests_form_4(monkeypatch):
     captured = {}
 
+    route = _sec_get(_edgar_payload([_hit(cik="0000320193", accession_id="0000320193-26-000108:form4.htm")]))
+
     def _fake_get(url, params=None, headers=None, timeout=None):
         if url == news_data.SEC_FULLTEXT_SEARCH_URL:
             captured["params"] = params
-        return _FakeResponse(_edgar_payload([_hit(cik="0000320193", accession_id="0000320193-26-000108:form4.htm")]))
+        return route(url)
 
     monkeypatch.setattr(news_data.requests, "get", _fake_get)
     fetch_sec_insider_trades("Apple Inc.", "AAPL")
@@ -227,7 +249,7 @@ def test_fetch_sec_insider_trades_requests_form_4(monkeypatch):
 
 def test_fetch_sec_insider_trades_returns_form_4_titled_results(monkeypatch):
     payload = _edgar_payload([_hit(cik="0000320193", accession_id="0000320193-26-000108:form4.htm")])
-    monkeypatch.setattr(news_data.requests, "get", lambda *a, **k: _FakeResponse(payload))
+    monkeypatch.setattr(news_data.requests, "get", _sec_get(payload))
 
     results = fetch_sec_insider_trades("Apple Inc.", "AAPL")
 
@@ -291,7 +313,7 @@ def test_fetch_gdelt_news_returns_parsed_results(monkeypatch):
     assert results[0]["title"] == "Apple announces new product"
     assert results[0]["source"] == "reuters.com"
     assert results[0]["provider"] == "GDELT"
-    assert results[0]["published_at"] == "2026-09-08T12:00:00"
+    assert results[0]["published_at"] == "2026-09-08T12:00:00+00:00"
 
 
 def test_fetch_gdelt_news_respects_max_articles(monkeypatch):
@@ -529,3 +551,61 @@ def test_fetch_ted_notices_never_sends_an_api_key(monkeypatch):
     monkeypatch.setattr(news_data.requests, "post", _fake_post)
     fetch_ted_notices("AAPL", "Apple")
     assert not any("key" in str(k).lower() for k in captured["json"])
+
+
+def test_fetch_ted_notices_renders_list_valued_fields_as_plain_text(monkeypatch):
+    # Multi-valued TED fields come back as lists, directly or inside the
+    # language-keyed dict — they must not render as a Python list repr.
+    notice = _ted_notice(buyer={"deu": ["Stadt München"]}, country=["DEU"])
+    monkeypatch.setattr(news_data.requests, "post", lambda *a, **k: _FakeResponse(_ted_payload([notice])))
+
+    results = fetch_ted_notices("SAP", "SAP")
+
+    assert results[0]["description"] == "Buyer: Stadt München (DEU)"
+
+
+def test_fetch_ted_notices_omits_empty_country_parentheses(monkeypatch):
+    notice = _ted_notice(country=None)
+    monkeypatch.setattr(news_data.requests, "post", lambda *a, **k: _FakeResponse(_ted_payload([notice])))
+    assert fetch_ted_notices("AAPL", "Apple")[0]["description"] == "Buyer: City of Amsterdam"
+
+
+# ---------------------------------------------------------------------------
+# Timestamps — every provider's published_at carries an explicit UTC offset
+# ---------------------------------------------------------------------------
+
+def test_fetch_finnhub_news_converts_epoch_in_utc_not_local_time(monkeypatch):
+    import dataclasses
+    import datetime as dt
+
+    fake_settings = dataclasses.replace(news_data.LLM_SETTINGS, finnhub_api_key="fake-key")
+    monkeypatch.setattr(news_data, "LLM_SETTINGS", fake_settings)
+    epoch = int(dt.datetime(2026, 9, 8, 12, 0, tzinfo=dt.timezone.utc).timestamp())
+    payload = [{"headline": "Apple beats estimates", "datetime": epoch, "source": "Reuters", "url": "http://x"}]
+    monkeypatch.setattr(news_data.requests, "get", lambda *a, **k: _FakeResponse(payload))
+
+    results = news_data.fetch_finnhub_news("AAPL")
+
+    assert results[0]["published_at"] == "2026-09-08T12:00:00+00:00"
+
+
+def test_fetch_google_news_rss_converts_pubdate_to_iso_utc(monkeypatch):
+    feed = _rss_feed([{"title": "Apple beats estimates", "pubDate": "Tue, 08 Sep 2026 14:00:00 +0200"}])
+    monkeypatch.setattr(news_data.requests, "get", lambda *a, **k: _FakeRssResponse(feed))
+    assert fetch_google_news_rss("AAPL", "Apple")[0]["published_at"] == "2026-09-08T12:00:00+00:00"
+
+
+def test_fetch_google_news_rss_keeps_an_unparsable_pubdate_unchanged(monkeypatch):
+    feed = _rss_feed([{"title": "Apple beats estimates", "pubDate": "sometime last week"}])
+    monkeypatch.setattr(news_data.requests, "get", lambda *a, **k: _FakeRssResponse(feed))
+    assert fetch_google_news_rss("AAPL", "Apple")[0]["published_at"] == "sometime last week"
+
+
+def test_fetch_sec_filings_does_not_crash_on_empty_display_names(monkeypatch):
+    hit = _hit(cik="0000320193", accession_id="0000320193-26-000106:aapl-20260815.htm")
+    hit["_source"]["display_names"] = []
+    monkeypatch.setattr(news_data.requests, "get", _sec_get(_edgar_payload([hit])))
+
+    results = fetch_sec_filings("Apple Inc.", "AAPL")
+
+    assert results[0]["title"] == "8-K filing: Apple Inc."

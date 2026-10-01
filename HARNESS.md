@@ -30,7 +30,7 @@ that context small and canonical, instead of scattering constants across the cod
 is what makes "give the assistant the right context" actually tractable.
 
 **3. A real feedback loop**
-`pytest` (367 tests across 19 files, `.github/workflows/ci.yml` running it on every push) plus
+`pytest` (454 tests across 19 files, `.github/workflows/ci.yml` running it on every push) plus
 `mypy --strict` (blocking — the full suite passes clean) are the loop that turns "looks
 right" into "is right." Nearly every fix in this project's history was caught *because*
 a test — or, for one entry in this project's own log below, mypy itself — failed, not

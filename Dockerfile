@@ -13,7 +13,11 @@ WORKDIR /app
 
 # Install deps first (separate layer) so code changes don't invalidate the pip cache
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# CPU-only torch first: on Linux the default PyPI wheel bundles several GB of CUDA
+# libraries that Render (no GPU) never uses. requirements.txt's torch>=2.0 is then
+# already satisfied, so pip does not pull the CUDA build on top.
+RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu torch \
+    && pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
@@ -21,6 +25,7 @@ EXPOSE 8501
 
 # Basic healthcheck so `docker ps` / orchestrators can see if the app is actually serving
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8501/_stcore/health')" || exit 1
+    CMD python -c "import os, urllib.request; urllib.request.urlopen(f\"http://localhost:{os.environ.get('PORT', '8501')}/_stcore/health\")" || exit 1
 
-CMD ["streamlit", "run", "app.py", "--server.port=8501"]
+# Render injects PORT; local docker run / compose fall back to 8501.
+CMD ["sh", "-c", "streamlit run app.py --server.port=${PORT:-8501}"]

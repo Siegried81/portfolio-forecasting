@@ -5,6 +5,7 @@ import pandas as pd
 import pytest
 
 from src.metrics import (
+    buy_and_hold_returns,
     annualised_return,
     annualised_volatility,
     calmar_ratio,
@@ -260,3 +261,28 @@ def test_summarise_performance_always_includes_ulcer_skew_kurtosis():
     assert "skewness" in summary
     assert "kurtosis" in summary
     assert summary["ulcer_index"] >= 0
+
+
+def test_sortino_downside_deviation_averages_over_all_periods():
+    """Sortino & Price: mean of min(excess, 0)^2 over EVERY period. Averaging over
+    the losing periods only gave sqrt(0.0005 / 2) here, i.e. a Sortino of 0.32."""
+    returns = pd.Series([0.02, -0.01, 0.03, -0.02])
+    expected = 0.005 / np.sqrt((0.01 ** 2 + 0.02 ** 2) / 4)
+    assert sortino_ratio(returns, risk_free_rate=0.0, periods_per_year=1) == pytest.approx(expected)
+
+
+def test_buy_and_hold_returns_let_the_weights_drift():
+    """50/50, then A doubles: the held portfolio is now 2/3 in A, so B doubling
+    next adds 1/3, not the +50% a constant-weight (rebalanced) mix would show."""
+    asset_returns = pd.DataFrame({"A": [1.0, 0.0], "B": [0.0, 1.0]})
+    returns, end_weights = buy_and_hold_returns(asset_returns, pd.Series({"A": 0.5, "B": 0.5}))
+    assert list(returns) == pytest.approx([0.5, 1 / 3])
+    assert end_weights.to_dict() == pytest.approx({"A": 0.5, "B": 0.5})
+    assert list(portfolio_returns(asset_returns, pd.Series({"A": 0.5, "B": 0.5}))) == pytest.approx([0.5, 0.5])
+
+
+def test_buy_and_hold_end_weights_follow_relative_performance():
+    asset_returns = pd.DataFrame({"A": [0.10], "B": [-0.10]})
+    _, end_weights = buy_and_hold_returns(asset_returns, pd.Series({"A": 0.5, "B": 0.5}))
+    assert end_weights["A"] == pytest.approx(0.55 / 1.0)
+    assert end_weights.sum() == pytest.approx(1.0)
