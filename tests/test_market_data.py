@@ -670,19 +670,68 @@ def test_fetch_yfinance_fundamentals_does_not_trip_breaker_on_unrelated_errors(m
 # fetch_adjusted_close — failed ticker kept as an all-NaN column
 # ---------------------------------------------------------------------------
 
-def test_fetch_adjusted_close_reports_a_ticker_yfinance_returned_as_all_nan(monkeypatch):
-    index = pd.to_datetime(["2024-01-02", "2024-01-03"])
-    raw = pd.concat(
+_NAN_TEST_INDEX = pd.to_datetime(["2024-01-02", "2024-01-03"])
+
+
+def _yfinance_raw_with_all_nan(good: str, empty: str) -> pd.DataFrame:
+    """yfinance multi-ticker frame where `empty` came back as an all-NaN column."""
+    return pd.concat(
         {
-            "AAPL": pd.DataFrame({"Close": [100.0, 101.0]}, index=index),
-            "BADTICKER": pd.DataFrame({"Close": [float("nan"), float("nan")]}, index=index),
+            good: pd.DataFrame({"Close": [100.0, 101.0]}, index=_NAN_TEST_INDEX),
+            empty: pd.DataFrame({"Close": [float("nan"), float("nan")]}, index=_NAN_TEST_INDEX),
         },
         axis=1,
     )
-    monkeypatch.setattr(market_data, "_download_yfinance", lambda *a, **k: raw)
+
+
+def test_fetch_adjusted_close_reports_a_ticker_yfinance_returned_as_all_nan(monkeypatch):
+    monkeypatch.setattr(market_data, "_download_yfinance", lambda *a, **k: _yfinance_raw_with_all_nan("AAPL", "BADTICKER"))
+    asked: list[tuple[str, list[str]]] = []
+
+    def _failing(name):
+        def _download(tickers, start, end):
+            asked.append((name, list(tickers)))
+            raise MarketDataError(f"{name} down (simulated)")
+        return _download
+
+    for name in ("_download_yahoo_direct", "_download_tiingo", "_download_twelvedata", "_download_alpha_vantage"):
+        monkeypatch.setattr(market_data, name, _failing(name))
 
     with pytest.raises(MarketDataError, match="BADTICKER"):
         fetch_adjusted_close(["AAPL", "BADTICKER"], dt.date(2024, 1, 1), dt.date(2024, 1, 5))
+    # Every remaining source was tried, and only for the missing ticker.
+    assert asked == [
+        ("_download_yahoo_direct", ["BADTICKER"]),
+        ("_download_tiingo", ["BADTICKER"]),
+        ("_download_twelvedata", ["BADTICKER"]),
+        ("_download_alpha_vantage", ["BADTICKER"]),
+    ]
+
+
+def test_fetch_adjusted_close_fills_an_all_nan_ticker_from_the_fallback_chain(monkeypatch):
+    monkeypatch.setattr(market_data, "_download_yfinance", lambda *a, **k: _yfinance_raw_with_all_nan("AAPL", "TSLA"))
+    monkeypatch.setattr(market_data, "_download_yahoo_direct", lambda *a, **k: (_ for _ in ()).throw(MarketDataError("down")))
+    tiingo_tsla = pd.DataFrame({"TSLA": [250.0, 252.0]}, index=_NAN_TEST_INDEX)
+    monkeypatch.setattr(market_data, "_download_tiingo", lambda *a, **k: tiingo_tsla.copy())
+
+    result = fetch_adjusted_close(["TSLA", "AAPL"], dt.date(2024, 1, 1), dt.date(2024, 1, 5))
+
+    assert list(result.columns) == ["TSLA", "AAPL"]
+    assert result["TSLA"].tolist() == [250.0, 252.0]
+    assert result["AAPL"].tolist() == [100.0, 101.0]
+    assert result.attrs["source"] == "yfinance + tiingo for TSLA"
+
+
+def test_fetch_adjusted_close_fills_an_all_nan_ticker_from_yahoo_direct_first(monkeypatch):
+    monkeypatch.setattr(market_data, "_download_yfinance", lambda *a, **k: _yfinance_raw_with_all_nan("AAPL", "TSLA"))
+    direct_tsla = pd.DataFrame({"TSLA": [250.0, 252.0]}, index=_NAN_TEST_INDEX)
+    monkeypatch.setattr(market_data, "_download_yahoo_direct", lambda *a, **k: direct_tsla.copy())
+    monkeypatch.setattr(market_data, "_download_tiingo", lambda *a, **k: pytest.fail("Tiingo should not be called once Yahoo direct filled the gap"))
+
+    result = fetch_adjusted_close(["AAPL", "TSLA"], dt.date(2024, 1, 1), dt.date(2024, 1, 5))
+
+    assert result["TSLA"].tolist() == [250.0, 252.0]
+    assert result.attrs["source"] == "yfinance + yahoo direct API for TSLA"
 
 
 # ---------------------------------------------------------------------------

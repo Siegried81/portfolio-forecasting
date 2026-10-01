@@ -204,6 +204,72 @@ than silently swapped:
 | **Airflow** for orchestration | **None — on-demand fetch inside Streamlit's own request-response cycle** | This app is interactive and synchronous (change a sidebar parameter, it recomputes), not a scheduled batch pipeline — there's no recurring DAG to orchestrate. Airflow would mean deploying a scheduler + webserver + metadata DB for zero present need, the same over-engineering trap Riskfolio-Lib was avoided for above. It would become the right tool if this moved from live per-request fetches to nightly pre-materialised data — noted as a real future option, not dismissed outright. |
 | **LangChain / LangGraph** for the LLM layer | **Custom `llm_client.py`** (one call site, Groq→[configurable hosted fallback list]→Ollama, multi-key rotation) | Every LLM use in this app (commentary, news digest, chatbot) is a single, well-defined call with context injection — no multi-step agent deciding which tool to call next, no complex cross-session memory to manage. LangChain/LangGraph earn their weight when an agent genuinely orchestrates multiple tools/steps dynamically; here it would be a heavy dependency hiding a simpler fallback/rotation mechanism behind an abstraction layer, for no functional gain. |
 
+## Data & LLM provider fallbacks
+
+### Market data: a five-step chain, then a per-ticker retry
+
+Yahoo Finance's anti-bot cookie/crumb handshake (which `yfinance` depends on) is a widely
+reported issue across the `yfinance` community, not specific to this app. `fetch_adjusted_close`
+handles it with a five-step chain, each step only running if the previous one actually failed:
+
+1. **`yfinance` library** — with retry-with-backoff (3 attempts). This is "the Yahoo Finance API"
+   as named in the brief.
+2. **Direct Yahoo Finance REST API** — bypasses the `yfinance` library entirely, in case its
+   cookie/crumb handling specifically (not Yahoo itself) is the point of failure. Same underlying
+   source, different code path. Honest expectation: this sits behind the same anti-bot layer, so
+   it's cheap insurance rather than a reliable fix — included because it's literally what the
+   brief specifies, not because it's expected to outperform the library.
+3. **Tiingo** — a genuinely different provider, tried FIRST among the three fallbacks once both
+   Yahoo-based attempts are exhausted: its free tier (500 req/hour) is meaningfully more generous
+   than the other two.
+4. **Twelve Data** (free key, 800 req/day) — tried if Tiingo also fails.
+5. **Alpha Vantage** — a fourth, LAST-RESORT provider, only reached if both Tiingo and Twelve Data
+   fail. Its free tier (25 req/DAY, one ticker per call — no batch endpoint) is the stingiest of
+   the four market-data sources this app knows about, which is exactly why it sits last.
+
+**Partial answers: retry only the missing tickers.** Yahoo often answers a multi-ticker request
+*partially*: a rate limit mid-batch leaves a perfectly valid symbol (e.g. `TSLA`) as an all-NaN
+column while the other tickers arrive. Instead of failing the whole load, `_fill_missing_tickers`
+asks the sources further down the chain (Yahoo direct if the library was used, then Tiingo →
+Twelve Data → Alpha Vantage) for the missing symbols alone, and merges whatever comes back. A
+`MarketDataError` is raised only when no source has the ticker. The Overview tab's data-source
+caption then names who filled which ticker (e.g. `yfinance + tiingo for TSLA`).
+
+**Circuit breaker.** Once both Yahoo paths fail, the app skips Yahoo for a short window and goes
+straight to Tiingo/Twelve Data/Alpha Vantage. Streamlit reruns the whole script on every widget
+interaction, so without it every click would replay the full multi-second Yahoo retry sequence.
+
+### LLM: Groq key rotation, then hosted fallbacks, then Ollama
+
+**Groq key rotation.** Free-tier Groq accounts hit daily/per-minute rate limits fast, especially
+during a demo. Up to 5 keys can be set (`GROQ_API_KEY`, `GROQ_API_KEY_2` .. `GROQ_API_KEY_5`) —
+`llm_client.py` tries them in order and advances to the next one **only on a 429 rate-limit
+error**. A non-rate-limit error (bad key, deprecated model) fails immediately to the hosted
+fallback chain instead of burning time cycling through keys that all share the same problem.
+Same pattern already proven on the Innovation Radar project's `llm_client.py`.
+
+**Why hosted fallbacks sit BETWEEN Groq and Ollama.** Ollama alone left a real gap: it only runs on whatever
+machine has it installed, so it's a genuine fallback in local dev but silently unreachable once
+this app is deployed (Render/Streamlit Community Cloud have no Ollama daemon in the container) —
+a Groq outage in production had no working fallback at all before this. OpenRouter, Cerebras, and
+SambaNova are all hosted (work in prod, not just on a dev laptop) and OpenAI-compatible (same
+request/response shape this app already speaks to Groq with — plain `requests`, no extra SDK per
+provider; see `llm_client.py`'s `_call_openai_compatible_provider`, the one shared implementation
+all three use). Cerebras and SambaNova are, like Groq, dedicated fast-inference hardware
+providers — genuine redundancy against each other (independent accounts/infrastructure), not a
+random third pick. Configuring any subset of the three works: `_fallback_providers()` only tries
+whichever ones actually have a key set, in the fixed order OpenRouter → Cerebras → SambaNova,
+skipping the rest. Ollama stays as the final tier: free and unlimited, but only useful to
+whoever is running this locally.
+
+### Live risk-free rate (FRED)
+
+Rather than a hardcoded guess, the sidebar's risk-free rate slider pre-fills with the actual
+current 3-month T-bill yield (FRED series `DGS3MO`) when `FRED_API_KEY` is set — still fully
+overridable by hand. `Alpha Vantage` and `Finnhub` were considered too, but both mostly duplicate
+what `yfinance` (prices) and `NewsAPI` (headlines) already cover; FRED adds a genuinely new,
+finance-relevant data point (a real macro rate) instead of a redundant one.
+
 ## Forecasting models, and where ML/NLP actually show up in this repo
 
 `forecasting.py` ships five models, in increasing order of sophistication —
