@@ -94,32 +94,12 @@ Market data (`yfinance`) needs no key. The app runs fully without *any* key — 
 AI Analyst tab's content and the live risk-free rate, not the core optimization/forecasting/
 comparison functionality.
 
-**Groq key rotation.** Free-tier Groq accounts hit daily/per-minute rate limits fast, especially
-during a demo. Up to 5 keys can be set (`GROQ_API_KEY`, `GROQ_API_KEY_2` .. `GROQ_API_KEY_5`) —
-`llm_client.py` tries them in order and advances to the next one **only on a 429 rate-limit
-error**. A non-rate-limit error (bad key, deprecated model) fails immediately to the hosted
-fallback chain instead of burning time cycling through keys that all share the same problem.
-Same pattern already proven on the Innovation Radar project's `llm_client.py`.
-
-**Why hosted fallbacks sit BETWEEN Groq and Ollama.** Ollama alone left a real gap: it only runs on whatever
-machine has it installed, so it's a genuine fallback in local dev but silently unreachable once
-this app is deployed (Render/Streamlit Community Cloud have no Ollama daemon in the container) —
-a Groq outage in production had no working fallback at all before this. OpenRouter, Cerebras, and
-SambaNova are all hosted (work in prod, not just on a dev laptop) and OpenAI-compatible (same
-request/response shape this app already speaks to Groq with — plain `requests`, no extra SDK per
-provider; see `llm_client.py`'s `_call_openai_compatible_provider`, the one shared implementation
-all three use). Cerebras and SambaNova are, like Groq, dedicated fast-inference hardware
-providers — genuine redundancy against each other (independent accounts/infrastructure), not a
-random third pick. Configuring any subset of the three works: `_fallback_providers()` only tries
-whichever ones actually have a key set, in the fixed order OpenRouter → Cerebras → SambaNova,
-skipping the rest. Ollama stays as the final tier: free and unlimited, but only useful to
-whoever is running this locally.
-
-**Live risk-free rate (FRED).** Rather than a hardcoded guess, the sidebar's risk-free rate slider
-pre-fills with the actual current 3-month T-bill yield (FRED series `DGS3MO`) when `FRED_API_KEY`
-is set — still fully overridable by hand. `Alpha Vantage` and `Finnhub` were considered too, but
-both mostly duplicate what `yfinance` (prices) and `NewsAPI` (headlines) already cover; FRED adds
-a genuinely new, finance-relevant data point (a real macro rate) instead of a redundant one.
+**Groq key rotation.** Up to 5 Groq keys can be set (`GROQ_API_KEY`, `GROQ_API_KEY_2` ..
+`GROQ_API_KEY_5`); the next one is tried only on a 429 rate limit. After Groq, the hosted
+fallbacks (OpenRouter → Cerebras → SambaNova, whichever have a key) keep the AI Analyst working in
+production, where local Ollama is unreachable. With `FRED_API_KEY` set, the risk-free rate slider
+pre-fills with the live 3-month T-bill yield. Why each choice was made:
+[docs/technical_deep_dive.md → Data & LLM provider fallbacks](docs/technical_deep_dive.md#data--llm-provider-fallbacks).
 
 ### Run the tests
 
@@ -127,7 +107,7 @@ a genuinely new, finance-relevant data point (a real macro rate) instead of a re
 pytest tests/ -v
 ```
 
-454 tests across 19 files, all passing — `mypy --strict` is also clean on every file in `src/`.
+456 tests across 19 files, all passing — `mypy --strict` is also clean on every file in `src/`.
 
 ### Check your environment
 
@@ -176,28 +156,17 @@ reliable fix is a slightly older interpreter (3.12 is the safest bet) via `pyenv
 
 ### Troubleshooting: Yahoo Finance returns no data / `crumb = 'Edge: Too Many Requests'`
 
-Yahoo Finance's anti-bot cookie/crumb handshake (which `yfinance` depends on) is a widely reported issue across the `yfinance`
-community, not specific to this app or your network. The app handles this with a five-step
-chain, each step only running if the previous one actually failed:
+Yahoo Finance's anti-bot cookie/crumb handshake (which `yfinance` depends on) is a widely
+reported issue across the `yfinance` community, not specific to this app or your network. The app
+falls back in order: `yfinance` → direct Yahoo API → Tiingo → Twelve Data → Alpha Vantage. If
+Yahoo returns some tickers but leaves one empty (typical of a rate limit, e.g. `TSLA`), only that
+ticker is fetched again from the next sources; an error appears only when none of them has it.
+Details: [docs/technical_deep_dive.md → Data & LLM provider fallbacks](docs/technical_deep_dive.md#data--llm-provider-fallbacks).
 
-1. **`yfinance` library** — with retry-with-backoff (3 attempts). This is "the Yahoo Finance API"
-   as named in the brief.
-2. **Direct Yahoo Finance REST API** — bypasses the `yfinance` library entirely, in case its
-   cookie/crumb handling specifically (not Yahoo itself) is the point of failure. Same underlying
-   source, different code path. Honest expectation: this sits behind the same anti-bot layer, so
-   it's cheap insurance rather than a reliable fix — included because it's literally what the
-   brief specifies, not because it's expected to outperform the library.
-3. **Tiingo** — a genuinely different provider, tried FIRST among the three fallbacks once both
-   Yahoo-based attempts are exhausted: its free tier (500 req/hour) is meaningfully more generous
-   than the other two.
-4. **Twelve Data** (free key, 800 req/day) — tried if Tiingo also fails.
-5. **Alpha Vantage** — a fourth, LAST-RESORT provider, only reached if both Tiingo and Twelve Data
-   fail. Its free tier (25 req/DAY, one ticker per call — no batch endpoint) is the stingiest of
-   the four market-data sources this app knows about, which is exactly why it sits last.
-
-The Overview tab shows a caption indicating which source actually served the data. Set
-`TWELVEDATA_API_KEY` (and optionally `TIINGO_API_KEY`/`ALPHA_VANTAGE_API_KEY`) in `.env` to enable
-steps 3-5 — without them, the app surfaces Yahoo's error once both Yahoo-based steps fail.
+The Overview tab shows a caption indicating which source actually served the data (e.g.
+`yfinance + tiingo for TSLA`). Set `TIINGO_API_KEY`, `TWELVEDATA_API_KEY` and/or
+`ALPHA_VANTAGE_API_KEY` in `.env` to enable the non-Yahoo fallbacks. Without them, the app shows
+Yahoo's error once both Yahoo-based steps fail.
 
 **A wall of `Failed to get ticker '...' reason: Expecting value...` in the terminal does NOT mean
 the app is broken.** yfinance logs every failed attempt loudly, including the ones this app's own
@@ -207,7 +176,7 @@ output) appear AFTER that wall of text, prices loaded successfully via a later s
 a red `st.error("Could not load market data: ...")` banner in the browser itself means every
 fallback failed and nothing loaded.
 
-If you still see no data after all five:
+If you still see no data after every fallback:
 ```bash
 rm -rf ~/.cache/py-yfinance   # clears a possibly-stale cached cookie
 ```
