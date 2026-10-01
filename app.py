@@ -74,7 +74,10 @@ from src.market_data import (
     fetch_vix_snapshot,
     resample_prices,
 )
-from src.metrics import apply_transaction_cost, compute_returns, compute_turnover, portfolio_returns, summarise_performance
+from src.metrics import (
+    apply_transaction_cost, buy_and_hold_returns, compute_returns, compute_turnover, portfolio_returns,
+    summarise_performance,
+)
 from src.timeseries_diagnostics import adf_stationarity_test, hurst_exponent, rolling_sharpe
 from src.optimization import (
     concentration_hhi,
@@ -1112,7 +1115,9 @@ def render_forecast_compare_tab(
     cost_bps = config["transaction_cost_bps"]
     realized_metrics = {}
     for name, w in portfolios.items():
-        port_returns = portfolio_returns(test_returns, w)
+        # Bought once at these weights and held through the window, the same
+        # convention as each walk-forward window (metrics.buy_and_hold_returns).
+        port_returns, _ = buy_and_hold_returns(test_returns, w)
         if cost_bps > 0:
             turnover = compute_turnover(w, None)  # starting from cash — establishing this position from scratch
             port_returns = apply_transaction_cost(port_returns, turnover, cost_bps)
