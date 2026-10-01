@@ -616,50 +616,49 @@ def render_overview_tab(
     # even if the user didn't add SPY to their own asset list.
     benchmark_returns = compute_returns(prices[[BENCHMARK_TICKER]])[BENCHMARK_TICKER] if BENCHMARK_TICKER in prices.columns else None
 
-    col_left, col_right = st.columns([1, 1])
-    with col_left:
-        st.subheader("Per-asset annualised metrics")
-        rows = []
-        for ticker in tickers:
-            asset_benchmark = benchmark_returns if ticker != BENCHMARK_TICKER else None  # a benchmark vs itself is meaningless
-            # dropna(): periods before a late listing are not returns of zero, and
-            # counting them would dilute the annualised figures.
-            m = summarise_performance(
-                returns[ticker].dropna(), risk_free_rate=risk_free_rate, periods_per_year=periods_per_year,
-                benchmark_returns=asset_benchmark,
-            )
-            rows.append({
-                "Ticker": ticker,
-                "Ann. return": f"{m['annual_return']:.1%}",
-                "Ann. volatility": f"{m['annual_volatility']:.1%}",
-                "Sharpe": f"{m['sharpe_ratio']:.2f}",
-                "Sharpe SE": _format_ratio(m['sharpe_se']),
-                "Sortino": f"{m['sortino_ratio']:.2f}",
-                "Calmar": f"{m['calmar_ratio']:.2f}" if not pd.isna(m['calmar_ratio']) else "—",
-                "Omega": _format_ratio(m['omega_ratio']),
-                "Beta (vs SPY)": f"{m.get('beta', float('nan')):.2f}" if 'beta' in m and not pd.isna(m['beta']) else "—",
-                "Alpha (Jensen, ann.)": f"{m['jensens_alpha']:+.2%}" if 'jensens_alpha' in m and not pd.isna(m['jensens_alpha']) else "—",
-                "Max drawdown": f"{m['max_drawdown']:.1%}",
-                "Ulcer Index": f"{m['ulcer_index']:.2f}" if not pd.isna(m['ulcer_index']) else "—",
-                "Skew": f"{m['skewness']:.2f}" if not pd.isna(m['skewness']) else "—",
-                "Kurtosis": f"{m['kurtosis']:.2f}" if not pd.isna(m['kurtosis']) else "—",
-            })
-        st.dataframe(pd.DataFrame(rows).set_index("Ticker"), width='stretch')
-
-    with col_right:
-        st.subheader("Correlation matrix")
-        corr = returns.corr()
-        fig_corr = go.Figure(data=go.Heatmap(
-            z=corr.values, x=corr.columns, y=corr.columns, zmin=-1, zmax=1,
-            colorscale="RdBu", reversescale=True, text=corr.round(2).values, texttemplate="%{text}",
-        ))
-        fig_corr.update_layout(height=380)
-        st.plotly_chart(fig_corr, width='stretch')
-        st.caption(
-            "Low/negative correlation between holdings is what actually reduces "
-            "portfolio-level risk below the average of the individual assets' risk — "
-            "this matrix is the reason diversification works, not just a decorative chart."
+    st.subheader("Per-asset annualised metrics")
+    rows = []
+    for ticker in tickers:
+        asset_benchmark = benchmark_returns if ticker != BENCHMARK_TICKER else None  # a benchmark vs itself is meaningless
+        # dropna(): periods before a late listing are not returns of zero, and
+        # counting them would dilute the annualised figures.
+        m = summarise_performance(
+            returns[ticker].dropna(), risk_free_rate=risk_free_rate, periods_per_year=periods_per_year,
+            benchmark_returns=asset_benchmark,
         )
+        rows.append({
+            "Ticker": ticker,
+            "Ann. return": f"{m['annual_return']:.1%}",
+            "Ann. volatility": f"{m['annual_volatility']:.1%}",
+            "Sharpe": f"{m['sharpe_ratio']:.2f}",
+            "Sharpe SE": _format_ratio(m['sharpe_se']),
+            "Sortino": f"{m['sortino_ratio']:.2f}",
+            "Calmar": f"{m['calmar_ratio']:.2f}" if not pd.isna(m['calmar_ratio']) else "—",
+            "Omega": _format_ratio(m['omega_ratio']),
+            "Beta (vs SPY)": f"{m.get('beta', float('nan')):.2f}" if 'beta' in m and not pd.isna(m['beta']) else "—",
+            "Alpha (Jensen, ann.)": f"{m['jensens_alpha']:+.2%}" if 'jensens_alpha' in m and not pd.isna(m['jensens_alpha']) else "—",
+            "Max drawdown": f"{m['max_drawdown']:.1%}",
+            "Ulcer Index": f"{m['ulcer_index']:.2f}" if not pd.isna(m['ulcer_index']) else "—",
+            "Skew": f"{m['skewness']:.2f}" if not pd.isna(m['skewness']) else "—",
+            "Kurtosis": f"{m['kurtosis']:.2f}" if not pd.isna(m['kurtosis']) else "—",
+        })
+    st.dataframe(pd.DataFrame(rows).set_index("Ticker"), width='stretch')
+
+    st.subheader("Correlation matrix")
+    corr = returns.corr()
+    fig_corr = go.Figure(data=go.Heatmap(
+        z=corr.values, x=corr.columns, y=corr.columns, zmin=-1, zmax=1,
+        colorscale="RdBu", reversescale=True, text=corr.round(2).values, texttemplate="%{text}",
+    ))
+    # Full width, below the metrics table: side by side, both were too narrow to
+    # read. Height grows with the universe so each cell keeps a legible size.
+    fig_corr.update_layout(height=max(420, 45 * len(corr)))
+    st.plotly_chart(fig_corr, width='stretch')
+    st.caption(
+        "Low/negative correlation between holdings is what actually reduces "
+        "portfolio-level risk below the average of the individual assets' risk — "
+        "this matrix is the reason diversification works, not just a decorative chart."
+    )
 
     st.divider()
     st.subheader("Time-series diagnostics")
