@@ -25,7 +25,7 @@ import os
 import re
 import tempfile
 import time
-from typing import Any
+from typing import Any, Callable
 
 import pandas as pd
 import requests
@@ -474,6 +474,48 @@ def _download_post_yahoo_fallback_chain(tickers: list[str], start: dt.date, end:
         return _download_alpha_vantage(tickers, start, end), "alpha vantage"
 
 
+def _fill_missing_tickers(
+    prices: pd.DataFrame, missing: list[str], start: dt.date, end: dt.date, source: str,
+) -> tuple[pd.DataFrame, str]:
+    """
+    Retry only the tickers a Yahoo source returned no prices for, on the
+    sources after it in the chain (direct Yahoo API if the library was used,
+    then Tiingo -> Twelve Data -> Alpha Vantage), and add whatever comes back.
+
+    Yahoo regularly answers a multi-ticker request partially: a rate limit or
+    a crumb error mid-batch leaves a perfectly valid symbol (TSLA) as an empty
+    column while the others arrive. Failing the whole load for that, or
+    sending the batch again to the same source, would not help; asking the
+    next sources for the missing symbols alone usually does. Returns the
+    merged prices and a `source` label that names who filled which ticker.
+    """
+    attempts: list[tuple[str, Callable[[list[str]], tuple[pd.DataFrame, str]]]] = []
+    if source == "yfinance":
+        attempts.append(("yahoo direct API", lambda m: (_download_yahoo_direct(m, start, end), "yahoo direct API")))
+    attempts.append(("fallback chain", lambda m: _download_post_yahoo_fallback_chain(m, start, end)))
+
+    filled_by = []
+    for name, download in attempts:
+        if not missing:
+            break
+        try:
+            result, tier = download(missing)
+        except MarketDataError as exc:
+            logger.warning("%s could not fill %s: %s", name, ", ".join(missing), exc)
+            continue
+        got = result.dropna(axis=1, how="all")
+        got = got[[t for t in missing if t in got.columns]]
+        if got.empty:
+            continue
+        prices = prices.join(got, how="outer")
+        filled_by.append(f"{tier} for {', '.join(got.columns)}")
+        missing = [t for t in missing if t not in got.columns]
+
+    if filled_by:
+        source = f"{source} + {'; '.join(filled_by)}"
+    return prices, source
+
+
 @st.cache_data(show_spinner=False, ttl=3600)
 def fetch_adjusted_close(
     tickers: list[str],
@@ -512,8 +554,9 @@ def fetch_adjusted_close(
     Leading NaNs are NOT filled: a ticker that started trading after `start`
     stays NaN before its first price. Rows where every ticker is NaN are
     dropped. A ticker whose column is entirely NaN (yfinance keeps a failed
-    symbol in a multi-ticker download as an all-NaN column) is treated as
-    missing and raises MarketDataError, like a ticker absent altogether.
+    symbol in a multi-ticker download as an all-NaN column) or that is absent
+    is fetched again on its own from the remaining sources (see
+    `_fill_missing_tickers`); MarketDataError is raised only if none has it.
     """
     if not tickers:
         raise MarketDataError("No tickers provided.")
@@ -551,9 +594,16 @@ def fetch_adjusted_close(
     # (yfinance keeps failed symbols as NaN columns); drop it so the check
     # below reports it instead of passing an empty series downstream.
     prices = prices.dropna(axis=1, how="all")
-    missing = set(tickers) - set(prices.columns)
+    missing = [t for t in tickers if t not in prices.columns]
+    if missing and source in ("yfinance", "yahoo direct API"):  # the non-Yahoo tail already ran otherwise
+        prices, source = _fill_missing_tickers(prices, missing, start, end, source)
+        missing = [t for t in tickers if t not in prices.columns]
     if missing:
-        raise MarketDataError(f"No data for: {', '.join(sorted(missing))} (source: {source}). Check the ticker symbols.")
+        raise MarketDataError(
+            f"No price data for: {', '.join(missing)} from any source (tried: {source}). Check the ticker "
+            "symbols; for a well-known ticker, Yahoo is probably rate-limiting, so retry in a few minutes."
+        )
+    prices = prices[tickers]  # requested order, whichever source filled each column
 
     prices = prices.ffill().dropna(how="all")
     if prices.empty:
