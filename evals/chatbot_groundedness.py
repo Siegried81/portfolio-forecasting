@@ -1,11 +1,14 @@
 """
-Groundedness eval for the chatbot — binary PASS/FAIL grading, with a
-human-judge agreement check before trusting the judge at scale.
+Groundedness eval for the chatbot — binary PASS/FAIL grading by an LLM
+judge. The human-judge agreement check that should precede trusting the
+judge at scale is a MANUAL step: this script only prints a reminder of it,
+it does not measure agreement itself.
 
 Run manually (not part of CI, makes real LLM calls): python evals/chatbot_groundedness.py
 """
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
@@ -47,19 +50,33 @@ Assistant answer: {answer}
 PASS only if the answer states the required fact correctly and does not
 invent numbers absent from the context."""
 
-def judge(context: str, question: str, fact: str, answer: str) -> bool:
+def parse_verdict(verdict: str) -> bool:
+    """True only if the judge's reply opens with the word PASS, ignoring
+    leading markdown decoration (`**PASS**`, `# PASS`). Many models bold their
+    verdict despite the prompt; a plain startswith("PASS") graded those as
+    FAIL and understated the pass rate. A reply opening with anything else
+    (FAIL, prose, empty) still counts as FAIL."""
+    match = re.match(r"[\W_]*(PASS|FAIL)\b", verdict.strip(), flags=re.IGNORECASE)
+    return bool(match) and match.group(1).upper() == "PASS"
+
+
+def judge(context: str, question: str, fact: str, answer: str) -> tuple[bool, str]:
+    """Ask the LLM judge for a verdict on one answer. Returns (passed,
+    backend) so the report shows which model did the grading."""
     from src.llm_client import chat
     prompt = JUDGE_PROMPT.format(context=context, question=question, fact=fact, answer=answer)
-    verdict, _backend = chat([{"role": "user", "content": prompt}])
-    return verdict.strip().upper().startswith("PASS")
+    verdict, backend = chat([{"role": "user", "content": prompt}])
+    return parse_verdict(verdict), backend
 
 def run_eval() -> None:
     passed = 0
     for case in EVAL_CASES:
-        answer, _backend = answer_portfolio_question(case["question"], FIXTURE_CONTEXT, [], None)
-        ok = judge(FIXTURE_CONTEXT, case["question"], case["must_contain"], answer)
+        answer, answer_backend = answer_portfolio_question(case["question"], FIXTURE_CONTEXT, [], None)
+        ok, judge_backend = judge(FIXTURE_CONTEXT, case["question"], case["must_contain"], answer)
         passed += ok
-        print(f"[{'PASS' if ok else 'FAIL'}] {case['question']}")
+        # chat() silently falls back across providers, so one run can grade
+        # answers from several different models; the backends make that visible.
+        print(f"[{'PASS' if ok else 'FAIL'}] {case['question']} (answer: {answer_backend}, judge: {judge_backend})")
     print(f"\n{passed}/{len(EVAL_CASES)} passed ({passed / len(EVAL_CASES):.0%})")
     print(
         "Note: before trusting this judge's verdicts at scale, label ~20 answers by hand "

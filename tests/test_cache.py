@@ -124,3 +124,66 @@ def test_make_cache_key_differs_for_different_arguments():
         return a
 
     assert _make_cache_key(f, (1,), {}) != _make_cache_key(f, (2,), {})
+
+# ---------------------------------------------------------------------------
+# Fallback paths still cache in-process (never uncached direct calls)
+# ---------------------------------------------------------------------------
+
+def test_cached_uses_in_process_cache_when_redis_unreachable(monkeypatch):
+    monkeypatch.setattr(cache_module, "REDIS_URL", "redis://nonexistent-host:6379/0")
+    monkeypatch.setattr(cache_module, "_get_redis_client", lambda: None)
+    st.cache_data.clear()
+    call_count = {"n": 0}
+
+    @cached(ttl_seconds=60)
+    def compute_unreachable(x: int) -> int:
+        call_count["n"] += 1
+        return x + 1
+
+    assert compute_unreachable(4) == 5
+    assert compute_unreachable(4) == 5
+    assert call_count["n"] == 1
+
+
+def test_cached_uses_in_process_cache_when_redis_get_fails(monkeypatch):
+    class _BrokenGetClient(_FakeRedisClient):
+        def get(self, key: str):
+            raise ConnectionError("redis connection reset")
+
+    monkeypatch.setattr(cache_module, "REDIS_URL", "redis://fake:6379/0")
+    monkeypatch.setattr(cache_module, "_get_redis_client", lambda: _BrokenGetClient())
+    st.cache_data.clear()
+    call_count = {"n": 0}
+
+    @cached(ttl_seconds=60)
+    def compute_broken_get(x: int) -> int:
+        call_count["n"] += 1
+        return x * 3
+
+    assert compute_broken_get(2) == 6
+    assert compute_broken_get(2) == 6
+    assert call_count["n"] == 1
+
+
+def test_cached_caches_non_serialisable_results_in_process(monkeypatch):
+    import pandas as pd
+
+    fake_client = _FakeRedisClient()
+    monkeypatch.setattr(cache_module, "REDIS_URL", "redis://fake:6379/0")
+    monkeypatch.setattr(cache_module, "_get_redis_client", lambda: fake_client)
+    st.cache_data.clear()
+    call_count = {"n": 0}
+
+    @cached(ttl_seconds=60)
+    def compute_frame(n: int) -> pd.DataFrame:
+        call_count["n"] += 1
+        return pd.DataFrame({"x": range(n)})
+
+    first = compute_frame(3)
+    second = compute_frame(3)
+    third = compute_frame(3)
+    assert first.equals(second) and second.equals(third)
+    # First call learns the result can't go to Redis; later calls are served
+    # from the in-process cache instead of recomputing.
+    assert call_count["n"] == 2
+    assert len(fake_client.store) == 0

@@ -10,18 +10,18 @@ Deliberately opt-in and fails soft, matching this app's existing philosophy
 default, and what every local/free-tier deployment already uses — `cached()`
 falls straight through to `@st.cache_data`, so nothing about today's app
 behaviour changes unless `REDIS_URL` is explicitly configured. If Redis IS
-configured but unreachable at call time (a network blip, a restart), a single
-call falls back to calling the wrapped function directly rather than raising
+configured but unreachable at call time (a network blip, a restart), calls
+fall back to the same `@st.cache_data` in-process cache rather than raising
 — a cache is an optimisation, and a broken one should never be able to take
 the app down.
 
 Usage: replace `@st.cache_data(show_spinner=False, ttl=1800)` with
-`@cached(ttl_seconds=1800)` on any function whose return value is JSON-
-serialisable (dicts, lists, floats, None — every function currently decorated
-with `@st.cache_data` in this codebase qualifies; none of them return a
-DataFrame). Not a drop-in for functions returning DataFrames without adding a
-DataFrame-aware serialiser first — none of today's callers need that, so it's
-deliberately out of scope here rather than speculative.
+`@cached(ttl_seconds=1800)`. Only JSON-serialisable return values (dicts,
+lists, floats, None) are stored in Redis; a JSON round trip also turns
+tuples into lists and non-string dict keys into strings. A function whose
+result json.dumps rejects — e.g. `factor_data.fetch_fama_french_factors`,
+which returns a DataFrame — still works and is still cached, but only in
+the per-process `@st.cache_data` layer, never shared through Redis.
 """
 from __future__ import annotations
 
@@ -93,16 +93,31 @@ def _make_cache_key(func: Callable[..., Any], args: tuple[Any, ...], kwargs: dic
 def cached(ttl_seconds: int) -> Callable[[F], F]:
     """Redis-backed cache when `REDIS_URL` is set and reachable; transparently
     falls back to `@st.cache_data` otherwise. See module docstring for the
-    full rationale and the JSON-serialisability requirement."""
+    full rationale and the JSON-serialisability requirement.
+
+    "Otherwise" covers every path where Redis can't serve the call: no
+    `REDIS_URL`, Redis unreachable (sticky for the whole process once a
+    connection attempt fails), a failed GET, and a result that isn't
+    JSON-serialisable. Each of those goes through the same `@st.cache_data`
+    wrapper rather than an uncached direct call — otherwise a Redis outage
+    would leave every decorated fetcher uncached for the rest of the process
+    and re-hit its rate-limited API on every Streamlit rerun."""
     if not REDIS_URL:
         return st.cache_data(show_spinner=False, ttl=ttl_seconds)  # type: ignore[return-value]
 
     def decorator(func: F) -> F:
+        st_cached_func = st.cache_data(show_spinner=False, ttl=ttl_seconds)(func)
+        # Set on the first result that json.dumps rejects (e.g. a DataFrame):
+        # such a function can never use the Redis path, so later calls go
+        # straight to the in-process cache instead of recomputing every time.
+        json_unsupported = False
+
         @functools.wraps(func)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
+            nonlocal json_unsupported
             client = _get_redis_client()
-            if client is None:
-                return func(*args, **kwargs)  # Redis unreachable — degrade to a direct call
+            if client is None or json_unsupported:
+                return st_cached_func(*args, **kwargs)
 
             key = _make_cache_key(func, args, kwargs)
             try:
@@ -110,16 +125,20 @@ def cached(ttl_seconds: int) -> Callable[[F], F]:
                 if cached_value is not None:
                     return json.loads(cached_value)
             except Exception as exc:
-                logger.warning("Redis GET failed for %s, calling directly: %s", key, exc)
-                return func(*args, **kwargs)
+                logger.warning("Redis GET failed for %s, using the in-process cache: %s", key, exc)
+                return st_cached_func(*args, **kwargs)
 
             result = func(*args, **kwargs)
             try:
-                client.setex(key, ttl_seconds, json.dumps(result))
-            except (TypeError, Exception) as exc:  # noqa: B014 — TypeError (not JSON-serialisable)
-                # and any Redis error are both non-fatal: the result is still
-                # correct, it just won't be cached for next time.
-                logger.warning("Redis SETEX failed for %s (or result wasn't JSON-serialisable): %s", key, exc)
+                serialised = json.dumps(result)
+            except (TypeError, ValueError) as exc:
+                json_unsupported = True
+                logger.warning("Result of %s isn't JSON-serialisable, using the in-process cache: %s", key, exc)
+                return result
+            try:
+                client.setex(key, ttl_seconds, serialised)
+            except Exception as exc:  # a Redis write error is non-fatal: the result is still correct
+                logger.warning("Redis SETEX failed for %s: %s", key, exc)
             return result
 
         return wrapper  # type: ignore[return-value]

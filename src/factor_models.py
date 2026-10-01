@@ -84,7 +84,11 @@ def pca_factor_cov(
             f"Not enough assets/observations to fit a factor model "
             f"(assets={n_assets}, observations={n_obs})."
         )
-    k = max(MIN_PCA_FACTORS, min(n_factors, MAX_PCA_FACTORS, max_feasible))
+    # Feasibility is applied LAST so it wins over the MIN_PCA_FACTORS floor:
+    # with 2 assets the floor of 2 would otherwise give k = n_assets, i.e. no
+    # factor structure at all (the 'model' reproduces the sample covariance
+    # exactly and every idiosyncratic variance collapses to the 1e-10 floor).
+    k = min(max(MIN_PCA_FACTORS, min(n_factors, MAX_PCA_FACTORS)), max_feasible)
 
     demeaned = clean - clean.mean()
 

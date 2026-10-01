@@ -162,3 +162,15 @@ def test_fetch_current_risk_free_rate_none_when_macro_snapshot_has_no_yield(monk
     st.cache_data.clear()
     monkeypatch.setattr(macro_data, "fetch_macro_snapshot", lambda: {"three_month_yield": None})
     assert macro_data.fetch_current_risk_free_rate() is None
+
+def test_fetch_current_risk_free_rate_follows_a_refreshed_snapshot(monkeypatch):
+    """The rate must always equal the CURRENT snapshot value — a separate cache
+    layer on the rate itself would keep serving the old yield after the
+    snapshot refreshes."""
+    import streamlit as st
+    st.cache_data.clear()
+    snapshot = {"three_month_yield": 0.0394}
+    monkeypatch.setattr(macro_data, "fetch_macro_snapshot", lambda: dict(snapshot))
+    assert macro_data.fetch_current_risk_free_rate() == pytest.approx(0.0394)
+    snapshot["three_month_yield"] = 0.0410  # snapshot cache expired and refetched
+    assert macro_data.fetch_current_risk_free_rate() == pytest.approx(0.0410)

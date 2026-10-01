@@ -177,8 +177,13 @@ def theta_forecast(prices: pd.Series, horizon: int, *, frequency: str = "daily")
     point_forecast = trend_forecast + residual_forecast
 
     # Confidence band: same sqrt(t)-widening convention as every other model
-    # here, scaled by the trend line's own residual std dev.
-    resid_std = float(np.std(residuals, ddof=1))
+    # here, scaled by the ONE-STEP-AHEAD forecast error std dev (the SES fit's
+    # own residuals), like naive/ETS. Not the std dev of `residuals`: those
+    # are deviations of the level from a straight line across the whole
+    # sample, which for a random-walk-like price series are many times larger
+    # than a one-step error, so multiplying them by sqrt(t) again would make
+    # the band roughly an order of magnitude too wide from the first step.
+    resid_std = float(np.std(ses_fit.resid, ddof=1))
     steps = np.arange(1, horizon + 1)
     band = resid_std * np.sqrt(steps)
 
@@ -412,13 +417,20 @@ def lstm_forecast(
     models' threshold, since a `lookback`-sized sliding window needs enough
     of them to actually learn from) or if training produces a non-finite
     loss or raises (rare, but the same "don't propagate a broken fit"
-    philosophy as ARIMA's grid search and GARCH's convergence check).
+    philosophy as ARIMA's grid search and GARCH's convergence check), and
+    likewise if torch itself is missing or fails to import.
     """
     if len(prices) < MIN_HISTORY_POINTS_FOR_LSTM:
         return naive_forecast(prices, horizon, frequency=frequency)
 
-    import torch  # imported lazily — optional, heavy dependency, only needed for this one model
-    from torch import nn
+    try:
+        import torch  # imported lazily — optional, heavy dependency, only needed for this one model
+        from torch import nn
+    except (ImportError, OSError):
+        # Missing torch raises ImportError; a broken install (e.g. a DLL that
+        # fails to load on Windows) raises OSError from torch's own __init__.
+        # Either way, degrade to naive like a failed training run does below.
+        return naive_forecast(prices, horizon, frequency=frequency)
 
     returns = prices.pct_change().dropna().values.astype("float32")
     if len(returns) < lookback + 10:  # not enough sliding windows to train on meaningfully

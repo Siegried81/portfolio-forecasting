@@ -169,3 +169,14 @@ def test_save_chunks_does_not_raise_when_redis_setex_fails(monkeypatch):
 
     monkeypatch.setattr(rag, "get_redis_client", lambda: _BrokenClient())
     save_chunks([_chunk("Whatever")], ["AAPL"])
+
+
+def test_retrieve_matches_a_question_naming_the_ticker_symbol():
+    """Headlines name the company, not the symbol: the chunk's ticker must
+    count toward relevance, or ties fall back to corpus order."""
+    chunks = [
+        Chunk(text="Apple quarterly earnings beat estimates", source="Reuters", provider="NewsAPI", ticker="AAPL", url=""),
+        Chunk(text="Nvidia quarterly earnings beat estimates", source="Reuters", provider="NewsAPI", ticker="NVDA", url=""),
+    ]
+    results = retrieve("NVDA earnings", chunks, top_k=1)
+    assert [c.ticker for c in results] == ["NVDA"]

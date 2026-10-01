@@ -42,9 +42,8 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
-from pypfopt import risk_models
-
 from src.config import MIN_HISTORY_POINTS_FOR_GARCH, TRADING_DAYS_PER_YEAR
+from src.optimization import ledoit_wolf_cov
 
 warnings.filterwarnings("ignore", module="arch")  # a non-converged GARCH fit is
 # already handled explicitly below (falls back to historical variance), so the
@@ -118,7 +117,7 @@ def garch_forecast_cov(
 
     `periods_per_year` MUST match `prices`' actual frequency — same
     annualisation contract as `optimization.historical_mu_cov` and
-    `forecasting.forecast_mu`; passing the wrong value silently over/under-
+    `optimization.forecast_mu`; passing the wrong value silently over/under-
     states annualised volatility rather than raising.
 
     Returns (covariance_df, diagnostics). `diagnostics["n_assets_via_garch"]`
@@ -149,8 +148,11 @@ def garch_forecast_cov(
     # Historical correlation, extracted from the SAME shrinkage covariance
     # estimator used elsewhere in this app (not a second, inconsistent
     # correlation estimate) — Ledoit-Wolf on the shrinkage covariance, then
-    # normalised to a correlation matrix via D^-1 @ Cov @ D^-1.
-    historical_cov = risk_models.CovarianceShrinkage(prices, frequency=periods_per_year).ledoit_wolf()
+    # normalised to a correlation matrix via D^-1 @ Cov @ D^-1. The shared
+    # helper estimates it on overlapping periods only, so a late-listed asset's
+    # missing history is not read as zero returns (which would bias its
+    # correlations toward zero).
+    historical_cov = ledoit_wolf_cov(prices, periods_per_year)
     historical_vols = np.sqrt(np.diag(historical_cov.values))
     inv_d = np.diag(1.0 / historical_vols)
     correlation = inv_d @ historical_cov.values @ inv_d

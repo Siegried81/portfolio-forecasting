@@ -168,7 +168,6 @@ def _fetch_fred_yoy_change(series_id: str) -> float | None:
     return latest_value / year_ago_value - 1.0
 
 
-@cached(ttl_seconds=6 * 3600)
 def fetch_current_risk_free_rate() -> float | None:
     """Latest published 3-month T-bill yield, as a decimal annual rate (e.g. 0.0412
     for 4.12%). Returns None if no FRED_API_KEY is set or the request fails.
@@ -177,6 +176,9 @@ def fetch_current_risk_free_rate() -> float | None:
     independently: sharing one cached fetch keeps the sidebar's risk-free-rate
     slider and the Macro & Risk panel's own displayed yield structurally unable
     to disagree, even if a single request to FRED happens to fail transiently.
+    Deliberately NOT cached itself: a second cache layer here would expire on
+    its own schedule and could keep serving an old yield after the snapshot
+    has refreshed, which is exactly the disagreement this delegation prevents.
     """
     return fetch_macro_snapshot()["three_month_yield"]
 

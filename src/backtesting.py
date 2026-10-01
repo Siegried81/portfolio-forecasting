@@ -10,7 +10,7 @@ from typing import Any
 
 from src.forecasting import forecast_all_assets
 from src.metrics import apply_transaction_cost, compute_returns, compute_turnover, portfolio_returns, summarise_performance
-from src.config import COV_METHOD_GARCH, DEFAULT_COV_METHOD, DEFAULT_PCA_FACTORS
+from src.config import COV_METHOD_GARCH, DEFAULT_COV_METHOD, DEFAULT_PCA_FACTORS, MIN_HISTORY_POINTS_FOR_FORECAST
 from src.optimization import forecast_mu, historical_mu_cov, optimize_max_sharpe, resolve_weight_bounds
 
 PORTFOLIO_TYPE_ORDER: list[str] = ["Historical-based", "Forecast-based", "Realized-optimal"]
@@ -57,6 +57,14 @@ def run_walk_forward(
     (window, portfolio type). `forecast_cov_method=COV_METHOD_GARCH` makes
     the Forecast-based portfolio use garch_forecast_cov instead of the
     historical covariance.
+
+    An asset listed after the start of `prices` (leading NaNs) only enters a
+    window once its training slice holds at least
+    `MIN_HISTORY_POINTS_FOR_FORECAST` prices — with no training history there
+    is nothing to estimate mu or a forecast from, and a handful of points
+    would also shrink every other asset's covariance sample to that overlap.
+    Each row's `n_assets` reports how many tickers that window actually used;
+    a window where no ticker qualifies is skipped.
     """
     windows = generate_expanding_windows(len(prices), horizon, min_train_periods, n_windows)
     records: list[dict[str, Any]] = []
@@ -64,29 +72,32 @@ def run_walk_forward(
 
     for window_idx, (train_end, test_end) in enumerate(windows, start=1):
         train_prices = prices.iloc[:train_end]
+        window_tickers = tickers_with_training_history(train_prices, tickers)
+        if not window_tickers:
+            continue
         # train_end - 1 so the test window includes the last training price:
         # pct_change() then yields exactly `horizon` returns, not horizon - 1.
         test_prices = prices.iloc[train_end - 1:test_end]
-        test_returns = compute_returns(test_prices[tickers])
+        test_returns = compute_returns(test_prices[window_tickers])
 
         weight_bounds = resolve_weight_bounds(max_weight_per_asset, allow_short_selling)
 
         mu_hist, cov_hist = historical_mu_cov(
-            train_prices[tickers], periods_per_year, cov_method=cov_method, n_factors=n_factors,
+            train_prices[window_tickers], periods_per_year, cov_method=cov_method, n_factors=n_factors,
         )
         w_hist = optimize_max_sharpe(mu_hist, cov_hist, risk_free_rate, weight_bounds)
 
-        forecasted = forecast_all_assets(train_prices[tickers], horizon, forecast_model, frequency)
-        mu_fcst = forecast_mu(train_prices.iloc[-1][tickers], forecasted, horizon, periods_per_year)
+        forecasted = forecast_all_assets(train_prices[window_tickers], horizon, forecast_model, frequency)
+        mu_fcst = forecast_mu(train_prices.iloc[-1][window_tickers], forecasted, horizon, periods_per_year)
         if forecast_cov_method == COV_METHOD_GARCH:
             from src.volatility_forecasting import garch_forecast_cov
-            cov_fcst, _diagnostics = garch_forecast_cov(train_prices[tickers], horizon, periods_per_year)
+            cov_fcst, _diagnostics = garch_forecast_cov(train_prices[window_tickers], horizon, periods_per_year)
         else:
             cov_fcst = cov_hist
         w_fcst = optimize_max_sharpe(mu_fcst, cov_fcst, risk_free_rate, weight_bounds)
 
         mu_real, cov_real = historical_mu_cov(
-            test_prices[tickers], periods_per_year, cov_method=cov_method, n_factors=n_factors,
+            test_prices[window_tickers], periods_per_year, cov_method=cov_method, n_factors=n_factors,
         )
         w_real = optimize_max_sharpe(mu_real, cov_real, risk_free_rate, weight_bounds)
 
@@ -97,13 +108,25 @@ def run_walk_forward(
                 port_returns = apply_transaction_cost(port_returns, turnover, transaction_cost_bps)
             previous_weights[label] = weights
             perf = summarise_performance(port_returns, risk_free_rate, periods_per_year)
-            records.append({"window": window_idx, "window_end": test_prices.index[-1], "portfolio": label, **perf})
+            records.append({
+                "window": window_idx, "window_end": test_prices.index[-1], "portfolio": label,
+                "n_assets": len(window_tickers), **perf,
+            })
 
     return pd.DataFrame(records)
 
 
+def tickers_with_training_history(train_prices: pd.DataFrame, tickers: list[str]) -> list[str]:
+    """Tickers with at least MIN_HISTORY_POINTS_FOR_FORECAST non-missing
+    training prices, in their original order — the per-window universe
+    `run_walk_forward` uses so a late-listed asset cannot crash the forecast
+    (an empty series) or degrade the covariance of every other asset."""
+    counts = train_prices[tickers].notna().sum()
+    return [t for t in tickers if counts[t] >= MIN_HISTORY_POINTS_FOR_FORECAST]
+
+
 def summarise_walk_forward(results: pd.DataFrame) -> pd.DataFrame:
-    """Mean/median/std of each metric per portfolio type across all windows."""
+    """Mean and std of each metric per portfolio type across all windows."""
     summary = results.groupby("portfolio")[
         ["annual_return", "annual_volatility", "sharpe_ratio", "sortino_ratio", "max_drawdown"]
     ].agg(["mean", "std"])

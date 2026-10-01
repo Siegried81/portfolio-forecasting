@@ -125,8 +125,10 @@ def sortino_ratio(
     """
     period_rf = (1.0 + risk_free_rate) ** (1.0 / periods_per_year) - 1.0
     excess_returns = returns - period_rf
-    downside = excess_returns[excess_returns < 0]
-    downside_deviation = np.sqrt((downside ** 2).mean()) if len(downside) > 0 else 0.0
+    # Downside deviation averages min(excess, 0)^2 over ALL periods (Sortino &
+    # Price, 1994), not only the losing ones: averaging over losing periods
+    # alone overstates it and makes Sortino too low, more so the rarer losses are.
+    downside_deviation = float(np.sqrt((excess_returns.clip(upper=0.0) ** 2).mean()))
     if downside_deviation == 0 or np.isnan(downside_deviation):
         return float("nan")
     return float((excess_returns.mean() / downside_deviation) * np.sqrt(periods_per_year))

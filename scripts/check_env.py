@@ -66,6 +66,12 @@ NO_KEY_NEEDED = [
 
 
 def main() -> None:
+    # The status markers below are non-ASCII; on a Windows console or a
+    # redirected stdout using a legacy code page (cp1252) printing them raises
+    # UnicodeEncodeError. Replacing unencodable characters keeps the report
+    # readable and keeps the "always exits 0" promise.
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(errors="replace")
     configured = [c for c in CHECKS if os.getenv(c.var_name)]
     missing = [c for c in CHECKS if not os.getenv(c.var_name)]
 

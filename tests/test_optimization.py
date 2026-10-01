@@ -5,6 +5,8 @@ import pytest
 
 from src.optimization import (
     efficient_frontier_points,
+    historical_mu_cov,
+    ledoit_wolf_cov,
     optimize_max_sharpe,
     portfolio_performance,
     resolve_weight_bounds,
@@ -122,3 +124,69 @@ def test_portfolio_performance_matches_manual_calculation_for_equal_weights():
     perf = portfolio_performance(mu, cov, weights, risk_free_rate=0.04)
     assert perf["expected_return"] == pytest.approx(0.15, abs=1e-9)
     assert perf["expected_volatility"] == pytest.approx(0.0325 ** 0.5, abs=1e-9)
+
+
+# ---------------------------------------------------------------------------
+# efficient_frontier_points — sweep range under weight bounds
+# ---------------------------------------------------------------------------
+
+def _five_asset_mu_cov() -> tuple[pd.Series, pd.DataFrame]:
+    tickers = ["A", "B", "C", "D", "E"]
+    mu = pd.Series([-0.15, -0.20, 0.16, -0.35, 0.13], index=tickers)
+    vols = np.array([0.32, 0.24, 0.16, 0.40, 0.19])
+    corr = np.full((5, 5), 0.2) + 0.8 * np.eye(5)
+    cov = pd.DataFrame(np.outer(vols, vols) * corr, index=tickers, columns=tickers)
+    return mu, cov
+
+
+@pytest.mark.parametrize("weight_bounds", [(0.0, 0.3), (-0.3, 0.3)])
+def test_efficient_frontier_points_sweeps_up_to_the_bounded_max_return(weight_bounds):
+    # With a 30% cap the best feasible portfolio is a capped blend, far below
+    # mu.max(); sweeping up to mu.max() used to leave only a handful of points.
+    mu, cov = _five_asset_mu_cov()
+    from pypfopt import EfficientFrontier
+    bounded_max = EfficientFrontier(mu, cov, weight_bounds=weight_bounds)._max_return()
+    frontier = efficient_frontier_points(mu, cov, n_points=25, weight_bounds=weight_bounds)
+    assert len(frontier) == 25
+    assert frontier["return"].max() == pytest.approx(bounded_max, abs=1e-3)
+
+
+def test_efficient_frontier_points_handles_all_negative_expected_returns():
+    mu, cov = _five_asset_mu_cov()
+    mu = mu - 0.5  # every asset loses money
+    frontier = efficient_frontier_points(mu, cov, n_points=10, weight_bounds=(0.0, 1.0))
+    assert len(frontier) == 10
+    assert frontier["return"].is_monotonic_increasing
+
+
+# ---------------------------------------------------------------------------
+# historical_mu_cov / ledoit_wolf_cov — assets with different start dates
+# ---------------------------------------------------------------------------
+
+def _correlated_prices(n: int = 500, seed: int = 0) -> pd.DataFrame:
+    rng = np.random.default_rng(seed)
+    common = rng.normal(0, 0.02, (n, 1))
+    returns = 0.6 * common + 0.8 * rng.normal(0, 0.02, (n, 3))
+    idx = pd.bdate_range("2020-01-01", periods=n)
+    return pd.DataFrame(100 * np.cumprod(1 + returns, axis=0), index=idx, columns=["A", "B", "C"])
+
+
+def test_ledoit_wolf_cov_matches_pypfopt_on_complete_data():
+    from pypfopt import risk_models
+    prices = _correlated_prices()
+    expected = risk_models.CovarianceShrinkage(prices, frequency=252).ledoit_wolf()
+    pd.testing.assert_frame_equal(ledoit_wolf_cov(prices, 252), expected)
+
+
+def test_historical_mu_cov_does_not_understate_a_late_listed_assets_risk():
+    # C only trades for the last 150 periods. Its missing history must not be
+    # read as zero returns, which would roughly halve its volatility.
+    prices = _correlated_prices()
+    prices.iloc[:350, 2] = np.nan
+    _, cov = historical_mu_cov(prices, periods_per_year=252)
+    late_returns = prices.pct_change(fill_method=None).dropna(how="any")
+    sample_vol = late_returns["C"].std() * np.sqrt(252)
+    assert np.sqrt(cov.loc["C", "C"]) == pytest.approx(sample_vol, rel=0.15)
+    corr_ac = cov.loc["A", "C"] / np.sqrt(cov.loc["A", "A"] * cov.loc["C", "C"])
+    sample_corr = late_returns["A"].corr(late_returns["C"])
+    assert corr_ac == pytest.approx(sample_corr, abs=0.1)
