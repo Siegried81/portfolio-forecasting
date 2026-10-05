@@ -7,8 +7,18 @@ mean-variance optimization, plus an AI analyst layer I added on top (LLM comment
 grounded Q&A chatbot).
 
 ## Live demo
-- Streamlit Community Cloud: [portfolio-forecasting-siegried81.streamlit.app](https://portfolio-forecasting-siegried81.streamlit.app/)
-- Render: [portfolio-forecasting.onrender.com](https://portfolio-forecasting.onrender.com)
+
+Both deployment targets below are **unverified — treat them as likely down**, not as working
+demos. The last time either was checked, Streamlit Community Cloud was redirecting to a login
+wall (so the app read as restricted to invited viewers rather than public) and Render was
+returning 503. Render runs on the free tier, which spins the service down after inactivity, so a
+503 there may just be a cold start — give it 30-60s and reload before concluding anything.
+
+- Streamlit Community Cloud: `https://portfolio-forecasting-siegried81.streamlit.app/`
+- Render: `https://portfolio-forecasting.onrender.com`
+
+To run it yourself with no deployment involved, see [Setup](#setup) below — that path is tested and
+is the reliable way to see the app.
 
 ## What it does, in one paragraph
 
@@ -107,7 +117,18 @@ pre-fills with the live 3-month T-bill yield. Why each choice was made:
 pytest tests/ -v
 ```
 
-456 tests across 19 files, all passing — `mypy --strict` is also clean on every file in `src/`.
+474 tests across 19 files, all passing — the whole suite, run on Python 3.14 against the pinned
+`requirements.txt` (about a minute end to end; every network call is mocked, so the count does not
+depend on any API key being set). `mypy --strict` is also clean on every file in `src/`.
+
+`torch` is needed only for the LSTM model and only ever runs on CPU here, but the default PyPI
+wheel pulls in several GB of CUDA packages. On a test/CI machine, install the CPU-only build first
+and the `requirements.txt` entry is then already satisfied:
+
+```bash
+pip install --index-url https://download.pytorch.org/whl/cpu torch
+pip install -r requirements.txt
+```
 
 ### Check your environment
 
@@ -207,9 +228,16 @@ docker run -p 8501:8501 --env-file .env portfolio-forecasting
 
 ## Deployment
 
+Neither target is currently verified as reachable — see [Live demo](#live-demo). The steps below are
+how each one is provisioned, not a claim that it is up right now.
+
 **Streamlit Community Cloud** (primary): push to GitHub → [share.streamlit.io](https://share.streamlit.io)
 → New app → point at this repo, `app.py` as the entrypoint → add `GROQ_API_KEY` / `NEWSAPI_KEY`
-under app Settings → Secrets (TOML format, same keys as `.env.example`).
+under app Settings → Secrets (TOML format, same keys as `.env.example`). A new app defaults to
+restricted viewers, which is what produces a login wall for anyone else: set Settings → Sharing to
+public, then confirm it in a logged-out private window, which is what a reader's browser looks like.
+The app's subdomain is whatever Streamlit Cloud assigns, so copy it from the dashboard rather than
+assuming it matches the URL above.
 
 **Render** (backup): push to GitHub → Render dashboard → New → Blueprint → point at this repo.
 `render.yaml` provisions the service from the `Dockerfile` automatically; set `GROQ_API_KEY` and

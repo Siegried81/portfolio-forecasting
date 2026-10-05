@@ -8,6 +8,8 @@ import pytest
 from src.config import MIN_HISTORY_POINTS_FOR_FORECAST, MIN_HISTORY_POINTS_FOR_LSTM
 from src.forecasting import (
     FORECAST_MODELS,
+    IN_SAMPLE_BAND_MODELS,
+    _get_gradient_boosted_regressor,
     arima_forecast,
     ets_forecast,
     forecast_all_assets,
@@ -233,6 +235,50 @@ def test_ml_regression_forecast_auto_falls_back_to_gradient_boosting_without_xgb
     result = ml_regression_forecast(prices, horizon=10, model_type="auto")
     assert len(result["forecast"]) == 10
     assert not result["forecast"].isna().any()
+
+
+@pytest.mark.parametrize("model_type", ["gradient_boosting", "random_forest", "xgboost", "auto"])
+def test_get_gradient_boosted_regressor_pins_random_state_on_every_backend(model_type):
+    # Every backend must fix its seed, or the "Forecast-based" portfolio's
+    # weights are not reproducible between runs.
+    if model_type in {"xgboost", "auto"}:
+        pytest.importorskip("xgboost")
+    model = _get_gradient_boosted_regressor(model_type, n_estimators=10)
+    assert model.get_params()["random_state"] == 0
+
+
+@pytest.mark.parametrize("model_type", ["xgboost", "auto"])
+def test_get_gradient_boosted_regressor_pins_xgboost_to_one_thread(model_type):
+    # n_jobs=1 so gradient summation order — and therefore the forecast — does
+    # not depend on how many cores the host happens to have.
+    pytest.importorskip("xgboost")
+    model = _get_gradient_boosted_regressor(model_type, n_estimators=10)
+    assert type(model).__name__ == "XGBRegressor"
+    assert model.get_params()["n_jobs"] == 1
+
+
+def test_ml_regression_forecast_is_deterministic_across_repeated_calls():
+    # The default "auto" backend (XGBoost when installed) must give bit-identical
+    # forecasts for identical input, the same guarantee lstm_forecast already has.
+    prices = _price_series(150, seed=11)
+    first = ml_regression_forecast(prices, horizon=10)
+    second = ml_regression_forecast(prices, horizon=10)
+    pd.testing.assert_series_equal(first["forecast"], second["forecast"])
+    pd.testing.assert_series_equal(first["lower"], second["lower"])
+    pd.testing.assert_series_equal(first["upper"], second["upper"])
+
+
+def test_in_sample_band_models_are_real_forecast_models():
+    # The UI warns on exactly these names, so a typo here would silently stop
+    # the warning from ever showing.
+    assert IN_SAMPLE_BAND_MODELS <= set(FORECAST_MODELS)
+
+
+def test_in_sample_band_models_lists_only_the_residual_scaled_models():
+    assert IN_SAMPLE_BAND_MODELS == {
+        "ML regression (gradient boosting)",
+        "LSTM (recurrent neural net)",
+    }
 
 
 def test_ml_regression_forecast_falls_back_to_naive_when_fitting_raises(monkeypatch):
