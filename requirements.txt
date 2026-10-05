@@ -1,40 +1,58 @@
+# Every entry is bounded on BOTH sides: a lower bound for the oldest release
+# whose API this code actually uses, and an upper bound at the next MAJOR
+# version (next minor for the 0.x packages, where a minor bump is the breaking
+# one under semver). Lower bounds alone made a fresh `pip install -r` resolve to
+# whatever had been released that day, so two installs of the same commit could
+# disagree — exactly how a passing suite turns into a red CI run with no code
+# change. The upper bounds below were chosen against the versions this suite is
+# verified green on (statsmodels 0.14.6, pandas 3.0.6, numpy 2.5.3, scipy
+# 1.18.1, scikit-learn 1.9.1, xgboost 3.4.1, arch 8.0.0, torch 2.14.1,
+# streamlit 1.65.0, plotly 7.1.0, pytest 9.1.1): the ceilings allow those and
+# anything compatible after them, and block the next major on purpose so the
+# upgrade is a deliberate, tested commit rather than a surprise.
+
 # --- Core app ---
-streamlit>=1.50.0
-pandas>=3.0.5
-numpy>=2.2
-python-dotenv>=1.0.1
+streamlit>=1.50.0,<2.0.0
+pandas>=3.0.5,<4.0.0
+numpy>=2.2,<3.0
+python-dotenv>=1.0.1,<2.0.0
 
 # --- Market data (free) ---
-yfinance>=0.2.43
+yfinance>=0.2.43,<2.0.0
 
 # --- Finance / optimization ---
-PyPortfolioOpt>=1.6.0
-scipy>=1.14
+PyPortfolioOpt>=1.6.0,<2.0.0
+scipy>=1.14,<2.0
 
 # --- Forecasting ---
 statsmodels>=0.14.4,<0.15.0
 
 # --- Visualisation ---
-plotly>=5.24.1
+plotly>=5.24.1,<8.0.0
 
 # --- LLM ---
-groq>=1.0.0
-requests>=2.32.3
-tiktoken>=0.8.0
-vaderSentiment>=3.3.2
+groq>=1.0.0,<2.0.0
+requests>=2.32.3,<3.0.0
+tiktoken>=0.8.0,<0.15.0
+vaderSentiment>=3.3.2,<4.0.0
 
 # --- ML (rag.py TF-IDF, factor_models.py PCA, forecasting.py ml_regression_forecast) ---
-scikit-learn>=1.5
-xgboost>=2.0
+scikit-learn>=1.5,<2.0
+xgboost>=2.0,<4.0
 
 # --- Forecasted covariance (src/volatility_forecasting.py) ---
-arch>=6.3
+arch>=6.3,<9.0
 
 # --- LSTM price forecasting (src/forecasting.py) ---
-torch>=2.0
+# Only ever used for a small CPU LSTM (src/forecasting.py::lstm_forecast), never
+# a GPU. The default PyPI wheel drags in several GB of nvidia-cu* CUDA packages
+# that are dead weight here, so for a test/CI box install torch from PyTorch's
+# CPU index first and let this line be satisfied by it:
+#   pip install --index-url https://download.pytorch.org/whl/cpu torch
+torch>=2.0,<3.0
 
 # --- Optional production cache (src/cache.py) ---
-redis>=5.0
+redis>=5.0,<9.0
 
 # --- Tests ---
-pytest>=8.3.3
+pytest>=8.3.3,<10.0.0

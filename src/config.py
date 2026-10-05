@@ -120,6 +120,19 @@ COV_METHOD_GARCH: str = "garch"  # forecasted (not historical) covariance — se
 # (per-asset volatility via GARCH(1,1)) versus what it deliberately still
 # borrows from history (the correlation matrix — see that module for why).
 DEFAULT_COV_METHOD: str = COV_METHOD_LEDOIT_WOLF
+
+# Sidebar labels for the Forecast-based portfolio's COVARIANCE source, kept
+# separate from COV_METHOD_* above because this switch answers a different
+# question: COV_METHOD_* chooses how a HISTORICAL covariance is estimated (and
+# applies to all three portfolios), whereas this one chooses whether the
+# Forecast-based portfolio's covariance is forecasted at all. None means "reuse
+# the historical covariance", which is the long-standing behaviour and stays the
+# default so the comparison numbers do not move unless the user opts in.
+FORECAST_COV_METHOD_LABELS: dict[str, str | None] = {
+    "Historical (default)": None,
+    "GARCH(1,1) forecast": COV_METHOD_GARCH,
+}
+DEFAULT_FORECAST_COV_METHOD: str | None = None
 DEFAULT_PCA_FACTORS: int = 10  # a common rule-of-thumb starting point (Fama-French-
 # scale factor counts run 3-6; statistical factor models for broad equity universes
 # typically land in the 10-20 range) — the UI shows cumulative explained variance so

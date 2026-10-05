@@ -41,6 +41,7 @@ from src.backtesting import (
 from src.config import (
     ALL_KNOWN_TICKERS,
     BENCHMARK_TICKER,
+    COV_METHOD_GARCH,
     COV_METHOD_LEDOIT_WOLF,
     COV_METHOD_PCA,
     DEFAULT_EQUITY_TICKERS,
@@ -49,6 +50,7 @@ from src.config import (
     DEFAULT_RISK_FREE_RATE,
     DEFAULT_TRANSACTION_COST_BPS,
     DEFAULT_WALK_FORWARD_WINDOWS,
+    FORECAST_COV_METHOD_LABELS,
     FREQUENCY_TO_PERIODS_PER_YEAR,
     HORIZON_BOUNDS_BY_FREQUENCY,
     LLM_SETTINGS,
@@ -62,7 +64,7 @@ from src.config import (
     SP500_SECTOR_UNIVERSE,
     WALK_FORWARD_MIN_TRAIN_PERIODS,
 )
-from src.forecasting import FORECAST_MODELS, forecast_all_assets
+from src.forecasting import FORECAST_MODELS, IN_SAMPLE_BAND_MODELS, forecast_all_assets
 from src.llm_client import LLMUnavailableError
 from src.factor_data import MIN_OBSERVATIONS_FOR_FACTOR_REGRESSION, compute_factor_exposures, fetch_fama_french_factors
 from src.macro_data import fetch_current_risk_free_rate, fetch_macro_snapshot
@@ -436,12 +438,28 @@ def render_sidebar() -> dict:
                  "count is actually enough for your selected universe.",
         )
 
+    # Covariance SOURCE for the Forecast-based portfolio only. Index 0 is the
+    # historical default, so the three-portfolio comparison keeps producing the
+    # same numbers as before unless the user deliberately switches this on.
+    forecast_cov_labels = list(FORECAST_COV_METHOD_LABELS.keys())
+    forecast_cov_label = st.sidebar.selectbox(
+        "Forecast-based covariance", options=forecast_cov_labels, index=0,
+        help="By default only the forecast-based portfolio's EXPECTED RETURNS come from the "
+             "forecasting layer — its covariance is still the historical one, the gap "
+             "volatility_forecasting.py documents. Switching to GARCH(1,1) forecasts each asset's "
+             "volatility instead (the correlation matrix stays historical: a genuine correlation "
+             "forecast needs DCC-GARCH, which no maintained Python package implements). Affects "
+             "the Forecast-based portfolio only — the historical and realized-optimal ones are "
+             "unchanged, which is what makes the toggle a fair A/B.",
+    )
+    forecast_cov_method = FORECAST_COV_METHOD_LABELS[forecast_cov_label]
+
     return dict(
         tickers=tickers, start_date=start_date, end_date=end_date, frequency=frequency,
         risk_free_rate=risk_free_rate, forecast_horizon=forecast_horizon, forecast_model=forecast_model,
         walk_forward_windows=walk_forward_windows, max_weight_per_asset=max_weight_per_asset,
         allow_short_selling=allow_short_selling, transaction_cost_bps=transaction_cost_bps,
-        cov_method=cov_method, n_factors=n_factors,
+        cov_method=cov_method, n_factors=n_factors, forecast_cov_method=forecast_cov_method,
     )
 
 
@@ -998,6 +1016,14 @@ def render_forecast_compare_tab(
         "widening with `√horizon` — see forecasting.py) shows further-out points are genuinely "
         "less reliable, not just 'the same trend, more of it.'"
     )
+    if config["forecast_model"] in IN_SAMPLE_BAND_MODELS:
+        st.warning(
+            f"**Read this band as optimistic.** {config['forecast_model']} scales its band by the "
+            "residuals of its own TRAINING fit (in-sample), which understate the error it makes on "
+            "data it has not seen — a true out-of-sample band would be wider. The statistical "
+            "models (naive / ETS / Theta / ARIMA) do not have this caveat. The Walk-forward "
+            "validation section below is the honest out-of-sample check."
+        )
     MAX_FAN_CHART_TICKERS = 4  # more than this and overlapping confidence bands become unreadable
     fan_tickers = st.multiselect(
         "Asset(s) to inspect", options=tickers, default=[tickers[0]], key="fan_chart_tickers",
@@ -1096,9 +1122,25 @@ def render_forecast_compare_tab(
     )
     w_historical = optimize_max_sharpe(mu_hist, cov_hist, rf, weight_bounds)
 
-    # --- 2. Forecast-optimal (mu from the forecast, cov still historical) ---
+    # --- 2. Forecast-optimal (mu from the forecast; cov historical unless the
+    # sidebar opts into a GARCH-forecasted one, same switch the walk-forward
+    # section passes through to run_walk_forward) ---
     mu_fcst = forecast_mu(train_prices.iloc[-1][tickers], forecasted_prices, horizon, periods_per_year)
-    w_forecast = optimize_max_sharpe(mu_fcst, cov_hist, rf, weight_bounds)
+    cov_fcst = cov_hist
+    if config["forecast_cov_method"] == COV_METHOD_GARCH:
+        from src.volatility_forecasting import garch_forecast_cov
+        cov_fcst, garch_diagnostics = garch_forecast_cov(train_prices[tickers], horizon, periods_per_year)
+        # A "forecasted" covariance that mostly fell back to historical variance
+        # is not the thing the user asked for — say so instead of implying every
+        # asset got a GARCH fit.
+        if garch_diagnostics["n_assets_via_fallback"]:
+            st.caption(
+                f"⚠️ GARCH forecast covariance: {garch_diagnostics['n_assets_via_garch']} of "
+                f"{len(tickers)} assets got a GARCH(1,1) fit; "
+                f"{', '.join(garch_diagnostics['fallback_tickers'])} fell back to historical "
+                "variance (too little history, or the fit did not converge)."
+            )
+    w_forecast = optimize_max_sharpe(mu_fcst, cov_fcst, rf, weight_bounds)
 
     # --- 3. Realized-optimal (hindsight: fitted on the actual held-out returns) ---
     mu_real, cov_real = historical_mu_cov(
@@ -1251,6 +1293,7 @@ def render_walk_forward_section(prices: pd.DataFrame, tickers: list[str], config
             config["risk_free_rate"], periods_per_year, WALK_FORWARD_MIN_TRAIN_PERIODS,
             config["max_weight_per_asset"], config["allow_short_selling"], config["transaction_cost_bps"],
             config["cov_method"], config["n_factors"],
+            forecast_cov_method=config["forecast_cov_method"],
             frequency=config["frequency"],
         )
 

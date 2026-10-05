@@ -184,6 +184,16 @@ def test_ulcer_index_zero_for_monotonic_gains():
     assert ulcer_index(returns) == pytest.approx(0.0, abs=1e-9)
 
 
+def test_ulcer_index_is_in_percentage_points_not_a_fraction():
+    """Martin's convention: the Ulcer Index reads on a 0-100 scale (12.3, not
+    0.123), unlike max_drawdown/VaR/CVaR which are decimal fractions. The docs
+    state that scale, so pin it on a hand-checkable case: wealth goes
+    1.0 -> 0.9 -> 0.9, drawdowns are 0, -10pt, -10pt, RMS = sqrt(200/3)."""
+    returns = pd.Series([0.0, -0.10, 0.0])
+    assert ulcer_index(returns) == pytest.approx(np.sqrt(200.0 / 3.0), abs=1e-9)
+    assert ulcer_index(returns) == pytest.approx(8.1649658, abs=1e-6)
+
+
 def test_ulcer_index_distinguishes_duration_from_max_drawdown():
     long_underwater = pd.Series([0.05, -0.20, 0.0, 0.0, 0.15])
     quick_recovery = pd.Series([0.05, -0.20, 0.15, 0.0, 0.0])

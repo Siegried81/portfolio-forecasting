@@ -9,6 +9,8 @@ import src.config as config
 from src.config import (
     ALL_KNOWN_TICKERS,
     DEFAULT_EQUITY_TICKERS,
+    DEFAULT_FORECAST_COV_METHOD,
+    FORECAST_COV_METHOD_LABELS,
     FREQUENCY_TO_PERIODS_PER_YEAR,
     LLMSettings,
     MAX_PCA_FACTORS,
@@ -158,3 +160,34 @@ def test_yearly_horizon_fits_in_the_longest_quick_range():
 
 def test_quick_date_ranges_contain_the_app_default():
     assert "5 years" in QUICK_DATE_RANGES  # app.py's start-date default reads this key
+
+
+# ---------------------------------------------------------------------------
+# Forecast-based covariance toggle (sidebar -> run_walk_forward)
+# ---------------------------------------------------------------------------
+
+def test_forecast_cov_method_labels_map_to_values_run_walk_forward_accepts():
+    # run_walk_forward only branches on COV_METHOD_GARCH; anything else means
+    # "reuse the historical covariance", which it expresses as None.
+    assert set(FORECAST_COV_METHOD_LABELS.values()) == {None, config.COV_METHOD_GARCH}
+
+
+def test_forecast_cov_method_default_is_the_historical_behaviour():
+    # The default must stay None so the three-portfolio comparison keeps
+    # producing the same numbers it did before the toggle existed.
+    assert DEFAULT_FORECAST_COV_METHOD is None
+    assert DEFAULT_FORECAST_COV_METHOD in FORECAST_COV_METHOD_LABELS.values()
+
+
+def test_forecast_cov_method_first_label_is_the_default():
+    # app.py's selectbox passes index=0, so the first label must be the default.
+    first_label = next(iter(FORECAST_COV_METHOD_LABELS))
+    assert FORECAST_COV_METHOD_LABELS[first_label] == DEFAULT_FORECAST_COV_METHOD
+
+
+def test_forecast_cov_method_is_not_confused_with_the_historical_cov_estimator():
+    # The historical-covariance selector offers Ledoit-Wolf / PCA; GARCH belongs
+    # only to the forecast-covariance switch, and mixing them would silently
+    # change what the Historical-based portfolio is measuring.
+    assert config.DEFAULT_COV_METHOD in {config.COV_METHOD_LEDOIT_WOLF, config.COV_METHOD_PCA}
+    assert config.COV_METHOD_GARCH not in {config.COV_METHOD_LEDOIT_WOLF, config.COV_METHOD_PCA}

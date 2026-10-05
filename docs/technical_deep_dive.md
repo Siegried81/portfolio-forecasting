@@ -10,6 +10,22 @@ Computed in `src/metrics.py` (unit-tested in `tests/test_metrics.py`) unless not
 `r` = period return series (daily/weekly/monthly/yearly per the sidebar), `rf` = risk-free rate,
 `n` = periods per year (252/52/12/1).
 
+**Scale, before any formula.** Every return, drawdown, VaR and CVaR figure below is a
+**decimal fraction** (`-0.343` = a 34.3% loss), rendered as a percentage in the UI. Two values in
+these tables are deliberately *not* on that scale and are marked where they appear: the **Ulcer
+Index** is in percentage points (Martin's own convention — `21.85`, not `0.2185`) and the ratios
+(Sharpe, Sortino, Calmar, Omega, Beta, IR, Treynor) are dimensionless. The per-asset table in the
+Overview tab therefore puts a percent-formatted drawdown (`-34.3%`) next to a bare Ulcer Index
+(`21.85`) in the same row; that is the convention, not an unformatted number.
+
+**These tables define formulas, not results.** No measured performance figure is published in
+this document or the README: every number in the app is computed live from the universe, date
+range and frequency *you* pick, so there is no fixed figure to quote. The example values that do
+appear below (a Sharpe of 5.89, a factor model explaining 35% vs 85% of variance) are
+illustrations of how to read a metric, not measurements of this app's output. The repo ships no
+cached market dataset, so nothing here can be re-derived from it either — the only
+repo-wide measured number quoted anywhere is the test count.
+
 ### 1. Return & risk — the building blocks
 
 | Metric | Formula | How to read it |
@@ -17,7 +33,7 @@ Computed in `src/metrics.py` (unit-tested in `tests/test_metrics.py`) unless not
 | Annualised Return | `(∏(1+r))^(n/periods) − 1` | Geometric, not arithmetic mean × n — a ±50% sequence is 0%, not the naive average (classic trap). |
 | Annualised Volatility | `std(r) × √n` | Total risk (upside + downside count equally). Not inherently "bad" — see Sortino/Omega for asymmetric views. |
 | Max Drawdown | `min[W(t)/max(W(0..t)) − 1]`, `W(t)=∏(1+r)` | Worst peak-to-trough loss — correlates most with an investor actually panic-selling. |
-| Ulcer Index | RMS of the % drawdown at *every* point (Peter Martin, 1987) | Captures *duration* underwater, not just depth. Lower is better; 0 = never dipped below a prior peak. |
+| Ulcer Index | RMS of the drawdown at *every* point (Peter Martin, 1987), **in percentage points** — `√(mean( (((W/cummax(W))−1)×100)² ))` | Captures *duration* underwater, not just depth. Lower is better; 0 = never dipped below a prior peak. Reads on a 0-100 scale, unlike the fractional Max Drawdown directly above it: `[0, −0.10, 0]` scores `8.16`, not `0.0816`. |
 | VaR 95% | 5th percentile of the return distribution (non-parametric) | "Worst 1-in-20 period loss exceeded X%" — says nothing about how much worse those periods got. |
 | CVaR 95% | `mean(r \| r ≤ VaR_95)` | Average loss beyond VaR — always at least as bad; a large VaR/CVaR gap flags a fat, dangerous tail. |
 
@@ -26,7 +42,7 @@ Computed in `src/metrics.py` (unit-tested in `tests/test_metrics.py`) unless not
 | Metric | Formula | How to read it |
 |---|---|---|
 | Sharpe | `(mean(r−rf_period)/std(r−rf_period)) × √n` | Above 1 generally good, above 2 very good. Penalises upside volatility exactly as much as downside. |
-| Sharpe SE | `√((1+0.5×SR_period²)/n)`, annualised (Lo, 2002) | Standard error of the Sharpe estimate itself — a rough 95% range is `Sharpe ± 1.96×SE`. Puts a real number behind "a Sharpe of 5.89 on 30 periods isn't reliable" instead of just an appeal to intuition. |
+| Sharpe SE | `√((1+0.5×SR_period²)/n_obs)`, annualised by `×√n` (Lo, 2002) | Standard error of the Sharpe estimate itself — a rough 95% range is `Sharpe ± 1.96×SE`. Puts a real number behind "a Sharpe of 5.89 isn't reliable": measured on **30 daily periods** that Sharpe carries `SE ≈ 3.00`, i.e. a 95% range of roughly `0.02` to `11.76` — an illustration of the formula (it depends only on the Sharpe and the period count, not on any particular asset), not a result from this app. |
 | Sortino | Same, denominator = downside deviation only (`√(mean(min(r−rf_period, 0)²))`, averaged over **all** periods, per Sortino & Price — averaging over losing periods only would overstate it) | Sortino ≥ Sharpe is normal for equities — only downside swings count against it. |
 | Calmar | `annual_return / \|max_drawdown\|` | Penalises only the single *worst* outcome lived through, not the whole spread — the number a risk committee asks for. |
 | Omega | `Σ(r−threshold \| r>threshold) / \|Σ(r−threshold \| r<threshold)\|` | Uses the *entire* empirical distribution, so it diverges from Sharpe/Sortino exactly when returns are skewed/fat-tailed. `∞` (shown `—`) = zero losing periods in the sample. |
@@ -52,8 +68,10 @@ Compare to see the gap between expectation and outcome.
 
 - **Expected return** `w·μ`, **expected volatility** `√(w·Σ·w)`, **expected Sharpe** `(expected_return−rf)/expected_volatility`.
 - **Diversification ratio** = weighted-average individual asset volatility ÷ actual
-  portfolio volatility. >1 whenever correlations are below 1 (the normal case) — the numeric
-  version of the Overview tab's correlation matrix. =1 means diversification buys nothing.
+  portfolio volatility, using **absolute** weights (so a short position still contributes its own
+  volatility to the numerator rather than cancelling against a long). >1 whenever correlations are
+  below 1 (the normal case) — the numeric version of the Overview tab's correlation matrix.
+  =1 means diversification buys nothing.
 - **Concentration / HHI** = `Σ w_i²`. Ranges `1/N` (equal-weighted) to `1.0` (single
   asset) — a quick check that the sidebar's max-weight cap is actually doing its job.
 
@@ -61,16 +79,37 @@ Compare to see the gap between expectation and outcome.
 
 **Forecast win rate** (walk-forward section, Forecast & Compare tab) — across every expanding
 window, the fraction where the forecast-based portfolio's *realized* Sharpe beat the
-historical-based one's. Near 50% across many windows is the honest, expected result for
-short-horizon price forecasting (consistent with the efficient market hypothesis) — a rate
-consistently well above 50% would be the real signal of a genuine edge. Don't read much into a
-single window (see "Walk-forward validation" below for why).
+historical-based one's (`backtesting.forecast_win_rate`, a strict `>`: a tie counts as a loss).
+Near 50% across many windows is the honest, expected result for short-horizon price forecasting
+(consistent with the efficient market hypothesis) — a rate consistently well above 50% would be
+the real signal of a genuine edge. The denominator is however many windows the run actually
+produced — at the defaults that is 5 windows (sidebar range 3-8), so a single window moves the
+rate by 20 percentage points and the usual quantisation applies: 0%, 20%, 40%, 60%, 80%, 100%
+are the only reachable values. Don't read much into a single window (see "Walk-forward
+validation" below for why).
 
 **Forecast fan chart** (Forecast & Compare tab, single asset at a time via a selector) — the
-point forecast that feeds the optimizer hides how much uncertainty compounds over the horizon; the
-shaded band (95% confidence interval, widening with `√horizon` — every model in `forecasting.py`
-computes this the same way, see `naive_forecast`'s own comment on the convention) makes that
-concrete: further-out points are genuinely less reliable, not just "the same trend, continued."
+point forecast that feeds the optimizer hides how much uncertainty compounds over the horizon;
+the shaded band (95% interval, `±1.96 × band`, widening with `√horizon`) makes that concrete:
+further-out points are genuinely less reliable, not just "the same trend, continued."
+
+The bands are **not all computed the same way**, and they are not all on the same scale — worth
+knowing before comparing one model's band against another's:
+
+| Model | What the band is scaled by | Scale |
+|---|---|---|
+| Naive | std dev of historical price *differences* × `√t` | currency (price units) |
+| ETS | std dev of the fit's residuals on price *levels* × `√t` | currency |
+| Theta | std dev of the SES fit's one-step residuals × `√t` | currency |
+| ARIMA | `statsmodels`' own forecast variance (`get_forecast().conf_int(alpha=0.05)`) | currency — no `√t` factor is applied by this repo; the widening comes from the model's own variance |
+| ML regression | **in-sample** residual std dev of predicted *returns* × the forecast price path × `√t` | relative (a fractional error, converted to currency by the price level) |
+| LSTM | **training** residual std dev of predicted *returns* × the forecast price path × `√t` | relative, same as ML regression |
+
+The last two are the ones to be careful with: an in-sample residual understates the error a model
+makes on data it has never seen, so those two bands are **optimistic** — narrower than a genuine
+out-of-sample band. `forecasting.py` exports exactly those two as `IN_SAMPLE_BAND_MODELS` so the
+UI can label them where the band is drawn. Walk-forward validation (below) is what measures these
+two models honestly, out of sample.
 
 ### 6. Macro context (FRED — shapes interpretation, not portfolio-specific)
 
@@ -346,7 +385,17 @@ number), a mean/std summary table, and a **forecast win rate** — the fraction 
 forecast-based portfolio beat the historical-based one on Sharpe. A win rate hovering near 50%
 across many windows is the honest, expected result for short-horizon price forecasting; a rate
 consistently well above 50% would be the actual signal that the forecasting step adds value rather
-than noise from one convenient split. `src/backtesting.py` implements this on top of the exact same
+than noise from one convenient split.
+
+Reading that summary table: each row is the mean and **sample** std (`ddof=1`) of one metric
+across the run's windows — 3 to 8 of them, 5 by default, each a `horizon`-sized slice of whatever
+date range is selected, so every figure is a small-sample statistic. A sample std is undefined
+for a single observation; `summarise_walk_forward` reports `0.0` there rather than a `NaN` that
+reads like a broken calculation (one window genuinely has no spread). The UI cannot reach that
+case — it refuses to run below `MIN_WALK_FORWARD_WINDOWS` = 3 — so it only shows up for direct
+library callers such as `scripts/benchmark_walk_forward.py`.
+
+`src/backtesting.py` implements this on top of the exact same
 `metrics.py` / `optimization.py` / `forecasting.py` functions the single-window comparison uses, so
 the two views can never silently disagree on how a metric is computed.
 
