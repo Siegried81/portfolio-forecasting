@@ -265,16 +265,29 @@ def _get_gradient_boosted_regressor(model_type: str, n_estimators: int) -> Any:
                        the lightweight fallback if a caller only wants
                        scikit-learn installed.
     """
+    # random_state=0 / n_jobs=1 on the XGBoost backends for the same reason the
+    # scikit-learn ones below pass random_state=0: the "Forecast-based" portfolio
+    # must be reproducible. Left unset, XGBoost picks its seed implicitly and
+    # parallelises gradient summation over however many cores the host happens
+    # to have, so the float accumulation order — and therefore the forecast —
+    # can differ between machines and container sizes. Single-threaded is not a
+    # real cost here: these fits take milliseconds on one asset's return series.
     if model_type == "auto":
         try:
             from xgboost import XGBRegressor
-            return XGBRegressor(n_estimators=n_estimators, max_depth=3, learning_rate=0.05, verbosity=0)
+            return XGBRegressor(
+                n_estimators=n_estimators, max_depth=3, learning_rate=0.05, verbosity=0,
+                random_state=0, n_jobs=1,
+            )
         except ImportError:
             model_type = "gradient_boosting"
 
     if model_type == "xgboost":
         from xgboost import XGBRegressor  # raises ImportError if explicitly requested but missing
-        return XGBRegressor(n_estimators=n_estimators, max_depth=3, learning_rate=0.05, verbosity=0)
+        return XGBRegressor(
+            n_estimators=n_estimators, max_depth=3, learning_rate=0.05, verbosity=0,
+            random_state=0, n_jobs=1,
+        )
     if model_type == "random_forest":
         from sklearn.ensemble import RandomForestRegressor
         return RandomForestRegressor(n_estimators=n_estimators, max_depth=5, random_state=0)
@@ -524,6 +537,19 @@ FORECAST_MODELS = {
     "ML regression (gradient boosting)": ml_regression_forecast,
     "LSTM (recurrent neural net)": lstm_forecast,
 }
+
+# Models whose confidence band is scaled by the residuals of their own TRAINING
+# fit (see ml_regression_forecast and lstm_forecast). An in-sample residual
+# understates the error a model makes on data it has not seen, so these two
+# bands are optimistic — narrower than a genuine out-of-sample band would be.
+# The statistical models' bands do not have this problem: naive/ETS/Theta derive
+# theirs from the one-step-ahead error scale and ARIMA's comes from statsmodels'
+# own forecast variance. Exported so the UI can label the difference where the
+# band is actually drawn, rather than leaving it documented only in this module.
+IN_SAMPLE_BAND_MODELS: frozenset[str] = frozenset({
+    "ML regression (gradient boosting)",
+    "LSTM (recurrent neural net)",
+})
 
 
 def forecast_all_assets(

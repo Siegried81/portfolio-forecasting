@@ -200,6 +200,68 @@ def test_summarise_walk_forward_handles_a_subset_of_portfolio_types():
     assert list(summary.index) == ["Historical-based", "Realized-optimal"]
 
 
+def _single_window_results() -> pd.DataFrame:
+    return pd.DataFrame({
+        "portfolio": PORTFOLIO_TYPE_ORDER,
+        "window": [1, 1, 1],
+        "annual_return": [0.10, 0.12, 0.15],
+        "annual_volatility": [0.18, 0.19, 0.17],
+        "sharpe_ratio": [0.9, 1.0, 1.3],
+        "sortino_ratio": [1.1, 1.2, 1.5],
+        "max_drawdown": [-0.2, -0.18, -0.15],
+    })
+
+
+def test_summarise_walk_forward_std_is_zero_not_nan_for_a_single_window():
+    # pandas' sample std (ddof=1) is NaN for one observation; a lone window has
+    # no spread to report, and a NaN here reads as a broken calculation.
+    summary = summarise_walk_forward(_single_window_results())
+    std_columns = [c for c in summary.columns if c[1] == "std"]
+    assert std_columns
+    assert summary[std_columns].notna().all().all()
+    assert (summary[std_columns] == 0.0).all().all()
+
+
+def test_summarise_walk_forward_single_window_means_are_the_values_themselves():
+    results = _single_window_results()
+    summary = summarise_walk_forward(results)
+    for portfolio in PORTFOLIO_TYPE_ORDER:
+        expected = results.loc[results["portfolio"] == portfolio, "sharpe_ratio"].iloc[0]
+        assert summary.loc[portfolio, ("sharpe_ratio", "mean")] == pytest.approx(expected)
+
+
+def test_summarise_walk_forward_still_reports_a_real_std_for_multiple_windows():
+    # The single-window guard must not flatten a genuine multi-window spread.
+    results = pd.DataFrame({
+        "portfolio": ["Historical-based"] * 3,
+        "window": [1, 2, 3],
+        "annual_return": [0.10, 0.20, 0.30],
+        "annual_volatility": [0.10, 0.10, 0.10],
+        "sharpe_ratio": [0.5, 1.0, 1.5],
+        "sortino_ratio": [0.6, 1.1, 1.6],
+        "max_drawdown": [-0.1, -0.2, -0.3],
+    })
+    summary = summarise_walk_forward(results)
+    assert summary.loc["Historical-based", ("sharpe_ratio", "std")] == pytest.approx(0.5)
+
+
+def test_summarise_walk_forward_guards_only_the_single_window_portfolio():
+    # One portfolio with a single window, another with several: the guard must
+    # apply per portfolio, not blank out the whole table.
+    results = pd.DataFrame({
+        "portfolio": ["Historical-based", "Historical-based", "Forecast-based"],
+        "window": [1, 2, 1],
+        "annual_return": [0.10, 0.20, 0.15],
+        "annual_volatility": [0.10, 0.12, 0.11],
+        "sharpe_ratio": [0.5, 1.5, 1.0],
+        "sortino_ratio": [0.6, 1.6, 1.1],
+        "max_drawdown": [-0.1, -0.2, -0.15],
+    })
+    summary = summarise_walk_forward(results)
+    assert summary.loc["Forecast-based", ("sharpe_ratio", "std")] == 0.0
+    assert summary.loc["Historical-based", ("sharpe_ratio", "std")] == pytest.approx(0.70710678, rel=1e-6)
+
+
 # ---------------------------------------------------------------------------
 # forecast_win_rate
 # ---------------------------------------------------------------------------

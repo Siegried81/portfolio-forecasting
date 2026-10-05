@@ -30,7 +30,7 @@ that context small and canonical, instead of scattering constants across the cod
 is what makes "give the assistant the right context" actually tractable.
 
 **3. A real feedback loop**
-`pytest` (456 tests across 19 files, `.github/workflows/ci.yml` running it on every push) plus
+`pytest` (474 tests across 19 files, `.github/workflows/ci.yml` running it on every push) plus
 `mypy --strict` (blocking — the full suite passes clean) are the loop that turns "looks
 right" into "is right." Nearly every fix in this project's history was caught *because*
 a test — or, for one entry in this project's own log below, mypy itself — failed, not
@@ -78,7 +78,7 @@ doesn't rediscover the same failure mode from scratch.
 ## What this gets me, concretely
 
 - **For this bootcamp project**: every fix above shipped with a regression test (or, for #13,
-  a passing `mypy --strict` run), so none of these thirteen mistakes can silently come back.
+  a passing `mypy --strict` run), so none of these fourteen mistakes can silently come back.
 - **For an interview**: "I use AI to write code" is table stakes. "Here's my
   recurring-errors log with the actual root causes, and here's why my test suite is
   built to catch each one again" is a materially different, harder-to-fake claim — and
