@@ -133,10 +133,29 @@ def tickers_with_training_history(
 
 
 def summarise_walk_forward(results: pd.DataFrame) -> pd.DataFrame:
-    """Mean and std of each metric per portfolio type across all windows."""
-    summary = results.groupby("portfolio")[
-        ["annual_return", "annual_volatility", "sharpe_ratio", "sortino_ratio", "max_drawdown"]
-    ].agg(["mean", "std"])
+    """
+    Mean and std of each metric per portfolio type across all windows.
+
+    The std is the sample std (pandas' default ddof=1), which is undefined —
+    and comes back NaN — for a portfolio type with only ONE window. That is
+    not a failure to report: one observation genuinely has no spread, so the
+    std is reported as 0.0 rather than a NaN that reads like a broken
+    calculation. Only single-window groups are substituted; a NaN surviving
+    this guard means something really is wrong with the metric upstream.
+    The UI's own walk-forward section refuses to run below
+    MIN_WALK_FORWARD_WINDOWS windows, so this case is reachable mainly by
+    direct library callers (e.g. scripts/benchmark_walk_forward.py).
+    """
+    metrics = ["annual_return", "annual_volatility", "sharpe_ratio", "sortino_ratio", "max_drawdown"]
+    grouped = results.groupby("portfolio")
+    summary = grouped[metrics].agg(["mean", "std"])
+
+    single_window = grouped.size() == 1
+    if single_window.any():
+        std_columns = [(metric, "std") for metric in metrics]
+        rows = single_window[single_window].index
+        summary.loc[rows, std_columns] = summary.loc[rows, std_columns].fillna(0.0)
+
     order = [p for p in PORTFOLIO_TYPE_ORDER if p in summary.index]
     return summary.loc[order]
 
