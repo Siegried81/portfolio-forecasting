@@ -21,6 +21,12 @@ RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu 
 
 COPY . .
 
+# Non-root user: if the app is ever compromised, the attacker is not root in the
+# container. -m gives it a home, where Streamlit and model caches write; the app
+# itself only writes to /tmp (yfinance cache).
+RUN useradd --create-home --uid 1000 app && chown -R app:app /app
+USER app
+
 EXPOSE 8501
 
 # Basic healthcheck so `docker ps` / orchestrators can see if the app is actually serving
