@@ -65,6 +65,7 @@ from src.config import (
     WALK_FORWARD_MIN_TRAIN_PERIODS,
 )
 from src.forecasting import FORECAST_MODELS, IN_SAMPLE_BAND_MODELS, forecast_all_assets
+from src.http_utils import redact_secrets
 from src.llm_client import LLMUnavailableError
 from src.factor_data import MIN_OBSERVATIONS_FOR_FACTOR_REGRESSION, compute_factor_exposures, fetch_fama_french_factors
 from src.macro_data import fetch_current_risk_free_rate, fetch_macro_snapshot
@@ -472,7 +473,8 @@ def load_data(config: dict) -> pd.DataFrame | None:
     try:
         daily_prices = fetch_adjusted_close(tickers_with_benchmark, config["start_date"], config["end_date"])
     except MarketDataError as exc:
-        st.error(f"Could not load market data: {exc}")
+        # redact_secrets: a provider error can embed a request URL with its API key.
+        st.error(f"Could not load market data: {redact_secrets(str(exc))}")
         return None
     return resample_prices(daily_prices, config["frequency"])
 
@@ -1407,7 +1409,7 @@ def render_ai_analyst_tab(
                     text, backend = generate_commentary(results_context)
                     st.session_state["commentary"] = (text, backend, results_context)
                 except LLMUnavailableError as exc:
-                    st.error(f"LLM unavailable: {exc}")
+                    st.error(f"LLM unavailable: {redact_secrets(str(exc))}")
         # Shown only for the numbers it was written about: a commentary from an
         # earlier configuration would describe a different portfolio.
         if st.session_state.get("commentary", (None, None, None))[2] == results_context:
