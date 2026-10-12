@@ -7,6 +7,13 @@ __pycache__
 *.pyo
 *.pyd
 .DS_Store
+# Secrets: COPY . . would otherwise bake them into the published image.
 .env
+.env.*
+!.env.example
+.streamlit/secrets.toml
+# Not needed at run time
+.github
+.vscode
 render.yaml
 README.md

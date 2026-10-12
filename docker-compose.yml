@@ -3,6 +3,9 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    # build + image: `docker compose up --build` builds from source and tags it with the
+    # Docker Hub name; `docker compose pull` downloads the published image instead.
+    image: ${DOCKERHUB_USERNAME:-siegried}/portfolio-forecasting:latest
     container_name: portfolio-forecasting
     ports:
       - "8501:8501"
@@ -29,5 +32,6 @@ services:
     image: redis:7-alpine
     profiles: ["with-redis"]
     ports:
-      - "6379:6379"
+      # 127.0.0.1 only: Redis has no password here, it must not be reachable from the network.
+      - "127.0.0.1:6379:6379"
     restart: unless-stopped
