@@ -249,15 +249,12 @@ class LLMSettings:
     openrouter_model: str = field(
         default_factory=lambda: os.getenv("OPENROUTER_MODEL", "openai/gpt-oss-120b:free")
     )
-    # Cerebras and SambaNova: two MORE hosted, OpenAI-compatible fallback tiers,
-    # alongside OpenRouter above — both are dedicated fast-inference
-    # providers (own hardware, own accounts, own infrastructure) in the same
-    # competitive niche as Groq, which is exactly what makes them genuine
-    # redundancy: an outage or rate limit specific to one provider's account
-    # doesn't take out the others. See llm_client.py's `_fallback_providers()`
-    # for the exact order they're tried in, after Groq and OpenRouter.
-    cerebras_api_key: str | None = field(default_factory=lambda: os.getenv("CEREBRAS_API_KEY") or None)
-    cerebras_model: str = field(default_factory=lambda: os.getenv("CEREBRAS_MODEL", "llama-3.3-70b"))
+    # SambaNova: a second hosted, OpenAI-compatible fallback tier after
+    # OpenRouter. It is a dedicated fast-inference provider (own hardware,
+    # account and infrastructure) in the same niche as Groq, which is what
+    # makes it genuine redundancy: an outage or rate limit on one provider's
+    # account doesn't take out the other. See llm_client.py's
+    # `_fallback_providers()` for the order they're tried in.
     sambanova_api_key: str | None = field(default_factory=lambda: os.getenv("SAMBANOVA_API_KEY") or None)
     sambanova_model: str = field(
         default_factory=lambda: os.getenv("SAMBANOVA_MODEL", "Meta-Llama-3.3-70B-Instruct")

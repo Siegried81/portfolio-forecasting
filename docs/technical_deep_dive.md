@@ -164,7 +164,7 @@ portfolio-forecasting/
 │   ├── factor_models.py         # PCA statistical factor model (covariance for wide universes)
 │   ├── forecasting.py           # naive / ETS / Theta / ARIMA / ML regression / LSTM price forecasting, parallel across tickers
 │   ├── http_utils.py            # shared "GET, expect JSON, fail soft" helper for the simplest fetchers
-│   ├── llm_client.py            # Groq (multi-key rotation) -> [OpenRouter, Cerebras, SambaNova] -> Ollama, one call site for all
+│   ├── llm_client.py            # Groq (multi-key rotation) -> [OpenRouter, SambaNova] -> Ollama, one call site for all
 │   ├── macro_data.py            # FRED: live 3-month T-bill rate, pre-fills the risk-free-rate slider; full macro/risk panel
 │   ├── market_data.py           # yfinance + fallback chain (Yahoo direct -> Tiingo -> Twelve Data -> Alpha Vantage) + fundamentals
 │   ├── metrics.py               # pure finance math: returns, Sharpe, Sortino, VaR, CVaR, drawdown, beta
@@ -225,7 +225,7 @@ portfolio-forecasting/
 Streamlit or LLM dependency — they're plain functions on DataFrames/Series, independently testable
 and reusable outside the app (a notebook, a batch job). `app.py` only wires UI widgets to these
 functions. `llm_client.py` is the single seam that talks to an LLM provider, which is what makes
-the Groq→[OpenRouter, Cerebras, SambaNova]→Ollama fallback chain (and adding a fifth provider
+the Groq→[OpenRouter, SambaNova]→Ollama fallback chain (and adding another provider
 later) a config-only change — see `llm_client.py`'s own docstring for why the hosted fallbacks
 share one implementation instead of one near-identical function per provider.
 
@@ -290,14 +290,14 @@ Same pattern already proven on the Innovation Radar project's `llm_client.py`.
 **Why hosted fallbacks sit BETWEEN Groq and Ollama.** Ollama alone left a real gap: it only runs on whatever
 machine has it installed, so it's a genuine fallback in local dev but silently unreachable once
 this app is deployed (Render/Streamlit Community Cloud have no Ollama daemon in the container) —
-a Groq outage in production had no working fallback at all before this. OpenRouter, Cerebras, and
-SambaNova are all hosted (work in prod, not just on a dev laptop) and OpenAI-compatible (same
+a Groq outage in production had no working fallback at all before this. OpenRouter and
+SambaNova are both hosted (work in prod, not just on a dev laptop) and OpenAI-compatible (same
 request/response shape this app already speaks to Groq with — plain `requests`, no extra SDK per
 provider; see `llm_client.py`'s `_call_openai_compatible_provider`, the one shared implementation
-all three use). Cerebras and SambaNova are, like Groq, dedicated fast-inference hardware
-providers — genuine redundancy against each other (independent accounts/infrastructure), not a
-random third pick. Configuring any subset of the three works: `_fallback_providers()` only tries
-whichever ones actually have a key set, in the fixed order OpenRouter → Cerebras → SambaNova,
+both use). SambaNova is, like Groq, a dedicated fast-inference hardware provider — genuine
+redundancy against OpenRouter (independent account/infrastructure), not a random pick.
+Configuring either or both works: `_fallback_providers()` only tries whichever ones actually
+have a key set, in the fixed order OpenRouter → SambaNova,
 skipping the rest. Ollama stays as the final tier: free and unlimited, but only useful to
 whoever is running this locally.
 
@@ -581,8 +581,8 @@ Tools and references the original brief pointed to. Kept as-is unless noted othe
    see `ai_features._wrap_context`) so instructions can point at a specific tag instead of a vaguer
    "the context above," and `SYSTEM_PERSONA`'s single most load-bearing rule (don't report an
    inflated annualised figure from a short window at face value) ships with a concrete GOOD/BAD
-   example pair, not prose alone — both changes matter more now that `chat()` can route to five
-   providers of varying instruction-following discipline (Groq, OpenRouter, Cerebras, SambaNova,
+   example pair, not prose alone — both changes matter more now that `chat()` can route to four
+   providers of varying instruction-following discipline (Groq, OpenRouter, SambaNova,
    Ollama).
 
 4. **Per-ticker forecasting and news fetching were the two biggest wall-clock costs** (ARIMA
@@ -743,9 +743,9 @@ has a starting script too (see "Capacity benchmarking" under Setup). What's left
    time-series foundation model) actually beats naive out-of-sample on this universe — which, per
    the walk-forward results already in this repo, is a real, open question, not a given.
 
-4. **A managed LLM tier with a real SLA** — Groq free + a 3-provider hosted fallback chain
-   (OpenRouter, Cerebras, SambaNova, closing the gap where Ollama alone
-   didn't work once deployed) is resilient but still rate-limited and best-effort across four free
+4. **A managed LLM tier with a real SLA** — Groq free + a 2-provider hosted fallback chain
+   (OpenRouter, SambaNova, closing the gap where Ollama alone
+   didn't work once deployed) is resilient but still rate-limited and best-effort across three free
    tiers. An enterprise contract (Azure OpenAI, or a paid tier on any of the above) would add a
    real SLA and guaranteed rate limit, plus a proper prompt-evaluation pipeline (regression-testing
    prompt changes against a fixed set of portfolios/questions, not just eyeballing output) before

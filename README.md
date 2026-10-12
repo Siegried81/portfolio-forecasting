@@ -29,7 +29,7 @@ ARIMA, gradient-boosted ML regression, and LSTM — see technical_deep_dive.md f
 not used), build an optimal portfolio from the *forecasted* returns,
 and compare its **actual, realized** out-of-sample performance against (a) the historical-based
 portfolio and (b) the hindsight-optimal portfolio built from the *actual* returns of that same
-window. An AI Analyst tab (Groq, falling back through OpenRouter, Cerebras, and SambaNova, then
+window. An AI Analyst tab (Groq, falling back through OpenRouter and SambaNova, then
 local Ollama) narrates the results and answers questions about them, grounded in the computed
 numbers — plus a news digest per ticker cross-referencing NewsAPI, Finnhub, SEC EDGAR,
 GDELT, Google News, and TED (EU public procurement)
@@ -83,8 +83,7 @@ streamlit run app.py
 | `SEMANTIC_SCHOLAR_API_KEY` | [semanticscholar.org/product/api](https://www.semanticscholar.org/product/api) | Optional — genuinely optional even without one: the search endpoint works unauthenticated at a lower shared rate limit; a key just raises it |
 | `HUGGINGFACE_API_KEY` | [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens) (free) | Optional — but required for the FinBERT sentiment tier specifically; without it that tier is skipped and the cascade falls to Finnhub then VADER |
 | `OPENROUTER_API_KEY` | [openrouter.ai](https://openrouter.ai) (free-tier models available) | Optional — 1st hosted LLM fallback tier, tried if every Groq key fails |
-| `CEREBRAS_API_KEY` | [cloud.cerebras.ai](https://cloud.cerebras.ai) (free tier available) | Optional — 2nd hosted LLM fallback tier, independent account/infrastructure from OpenRouter |
-| `SAMBANOVA_API_KEY` | [cloud.sambanova.ai](https://cloud.sambanova.ai) (free tier available) | Optional — 3rd hosted LLM fallback tier, tried last among the hosted providers |
+| `SAMBANOVA_API_KEY` | [cloud.sambanova.ai](https://cloud.sambanova.ai) (free tier available) | Optional — 2nd hosted LLM fallback tier, tried after OpenRouter; independent account/infrastructure |
 | Ollama (local fallback) | `ollama serve` + `ollama pull llama3.1` — [ollama.com](https://ollama.com) | Optional — final tier, only reachable when self-hosting locally; silently unreachable in a deployed container |
 
 **News digest cross-referencing.** The AI Analyst's news digest pulls from six genuinely
@@ -106,7 +105,7 @@ comparison functionality.
 
 **Groq key rotation.** Up to 5 Groq keys can be set (`GROQ_API_KEY`, `GROQ_API_KEY_2` ..
 `GROQ_API_KEY_5`); the next one is tried only on a 429 rate limit. After Groq, the hosted
-fallbacks (OpenRouter → Cerebras → SambaNova, whichever have a key) keep the AI Analyst working in
+fallbacks (OpenRouter → SambaNova, whichever have a key) keep the AI Analyst working in
 production, where local Ollama is unreachable. With `FRED_API_KEY` set, the risk-free rate slider
 pre-fills with the live 3-month T-bill yield. Why each choice was made:
 [docs/technical_deep_dive.md → Data & LLM provider fallbacks](docs/technical_deep_dive.md#data--llm-provider-fallbacks).
