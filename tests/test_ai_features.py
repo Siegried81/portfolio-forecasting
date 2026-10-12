@@ -342,7 +342,7 @@ def test_groundedness_eval_parses_judge_verdicts(verdict, expected):
 def test_groundedness_eval_judge_reports_its_backend(monkeypatch):
     import src.llm_client as llm_client
 
-    monkeypatch.setattr(llm_client, "chat", lambda messages: ("**PASS** fine", "cerebras (fallback)"))
+    monkeypatch.setattr(llm_client, "chat", lambda messages: ("**PASS** fine", "sambanova (fallback)"))
     passed, backend = _load_groundedness_eval().judge("ctx", "q", "0.52", "It is 0.52")
     assert passed is True
-    assert backend == "cerebras (fallback)"
+    assert backend == "sambanova (fallback)"
