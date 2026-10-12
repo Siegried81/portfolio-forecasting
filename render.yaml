@@ -19,8 +19,6 @@ services:
       # GROQ_MODEL intentionally not set — config.py's default applies unless overridden.
       - key: OPENROUTER_API_KEY
         sync: false
-      - key: CEREBRAS_API_KEY
-        sync: false
       - key: SAMBANOVA_API_KEY
         sync: false
       - key: NEWSAPI_KEY
