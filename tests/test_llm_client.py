@@ -13,7 +13,7 @@ def _patch_settings(monkeypatch, **overrides):
 
 
 def _no_hosted_fallbacks(monkeypatch):
-    _patch_settings(monkeypatch, openrouter_api_key=None, cerebras_api_key=None, sambanova_api_key=None)
+    _patch_settings(monkeypatch, openrouter_api_key=None, sambanova_api_key=None)
 
 
 # ---------------------------------------------------------------------------
@@ -34,7 +34,7 @@ def test_chat_returns_groq_result_and_backend_label_when_groq_succeeds(monkeypat
 
 
 def test_chat_falls_back_to_first_configured_hosted_provider_when_groq_fails(monkeypatch):
-    _patch_settings(monkeypatch, openrouter_api_key="fake-key", cerebras_api_key=None, sambanova_api_key=None)
+    _patch_settings(monkeypatch, openrouter_api_key="fake-key", sambanova_api_key=None)
     monkeypatch.setattr(llm_client, "_call_groq", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("Groq down")))
     monkeypatch.setattr(
         llm_client, "_call_openai_compatible_provider",
@@ -47,7 +47,7 @@ def test_chat_falls_back_to_first_configured_hosted_provider_when_groq_fails(mon
 
 
 def test_chat_tries_hosted_fallbacks_in_order_and_stops_at_first_success(monkeypatch):
-    _patch_settings(monkeypatch, openrouter_api_key="or-key", cerebras_api_key="cb-key", sambanova_api_key=None)
+    _patch_settings(monkeypatch, openrouter_api_key="or-key", sambanova_api_key="sn-key")
     monkeypatch.setattr(llm_client, "_call_groq", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("Groq down")))
 
     def _fake_provider_call(provider, messages, temperature, max_tokens):
@@ -59,12 +59,12 @@ def test_chat_tries_hosted_fallbacks_in_order_and_stops_at_first_success(monkeyp
     monkeypatch.setattr(llm_client, "_call_ollama", lambda *a, **k: pytest.fail("Ollama should not be called"))
 
     text, backend = chat([{"role": "user", "content": "hi"}])
-    assert text == "cerebras answer"
-    assert backend == "cerebras (fallback)"
+    assert text == "sambanova answer"
+    assert backend == "sambanova (fallback)"
 
 
 def test_chat_falls_back_to_ollama_when_groq_and_every_hosted_provider_fail(monkeypatch):
-    _patch_settings(monkeypatch, openrouter_api_key="or-key", cerebras_api_key=None, sambanova_api_key=None)
+    _patch_settings(monkeypatch, openrouter_api_key="or-key", sambanova_api_key=None)
     monkeypatch.setattr(llm_client, "_call_groq", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("Groq down")))
     monkeypatch.setattr(
         llm_client, "_call_openai_compatible_provider",
@@ -104,17 +104,15 @@ def test_fallback_providers_empty_when_no_keys_configured(monkeypatch):
 
 
 def test_fallback_providers_includes_only_configured_ones_in_fixed_order(monkeypatch):
-    _patch_settings(monkeypatch, openrouter_api_key=None, cerebras_api_key=None, sambanova_api_key="sn-key")
+    _patch_settings(monkeypatch, openrouter_api_key=None, sambanova_api_key="sn-key")
     labels = [p.label for p in llm_client._fallback_providers()]
     assert labels == ["sambanova"]
 
 
-def test_fallback_providers_order_is_openrouter_then_cerebras_then_sambanova(monkeypatch):
-    _patch_settings(
-        monkeypatch, openrouter_api_key="or-key", cerebras_api_key="cb-key", sambanova_api_key="sn-key",
-    )
+def test_fallback_providers_order_is_openrouter_then_sambanova(monkeypatch):
+    _patch_settings(monkeypatch, openrouter_api_key="or-key", sambanova_api_key="sn-key")
     labels = [p.label for p in llm_client._fallback_providers()]
-    assert labels == ["openrouter", "cerebras", "sambanova"]
+    assert labels == ["openrouter", "sambanova"]
 
 
 # ---------------------------------------------------------------------------
@@ -138,15 +136,15 @@ def test_call_openai_compatible_provider_sends_bearer_auth_to_the_right_url(monk
         return _FakeResponse()
 
     monkeypatch.setattr(llm_client.requests, "post", _fake_post)
-    provider = _HostedProvider("cerebras", "fake-cerebras-key", "https://api.cerebras.ai/v1", "llama-3.3-70b")
+    provider = _HostedProvider("sambanova", "fake-sambanova-key", "https://api.sambanova.ai/v1", "Meta-Llama-3.3-70B-Instruct")
     result = llm_client._call_openai_compatible_provider(
         provider, [{"role": "user", "content": "hi"}], temperature=0.3, max_tokens=100,
     )
 
     assert result == "provider says hi"
-    assert captured["url"] == "https://api.cerebras.ai/v1/chat/completions"
-    assert captured["headers"]["Authorization"] == "Bearer fake-cerebras-key"
-    assert captured["json"]["model"] == "llama-3.3-70b"
+    assert captured["url"] == "https://api.sambanova.ai/v1/chat/completions"
+    assert captured["headers"]["Authorization"] == "Bearer fake-sambanova-key"
+    assert captured["json"]["model"] == "Meta-Llama-3.3-70B-Instruct"
 
 
 def test_call_openai_compatible_provider_raises_on_http_error(monkeypatch):
@@ -291,14 +289,14 @@ def test_chat_falls_through_when_groq_returns_an_empty_completion(monkeypatch):
 
 
 def test_chat_falls_through_when_a_hosted_provider_returns_an_empty_completion(monkeypatch):
-    _patch_settings(monkeypatch, openrouter_api_key="or-key", cerebras_api_key="cb-key", sambanova_api_key=None)
+    _patch_settings(monkeypatch, openrouter_api_key="or-key", sambanova_api_key="sn-key")
     monkeypatch.setattr(llm_client, "_call_groq", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("Groq down")))
     monkeypatch.setattr(
         llm_client, "_call_openai_compatible_provider",
-        lambda provider, *a: "" if provider.label == "openrouter" else "cerebras answer",
+        lambda provider, *a: "" if provider.label == "openrouter" else "sambanova answer",
     )
     monkeypatch.setattr(llm_client, "_call_ollama", lambda *a, **k: pytest.fail("Ollama should not be called"))
-    assert chat([{"role": "user", "content": "hi"}]) == ("cerebras answer", "cerebras (fallback)")
+    assert chat([{"role": "user", "content": "hi"}]) == ("sambanova answer", "sambanova (fallback)")
 
 
 def test_chat_raises_when_the_last_tier_returns_an_empty_completion(monkeypatch):

@@ -72,8 +72,8 @@ def _wrap_context(tag: str, content: str) -> str:
     papers) in an XML tag, so the model can clearly tell it apart from the
     surrounding INSTRUCTIONS (plain prose in the rest of the system prompt).
     Recommended practice for a prompt this long, and especially useful now
-    that `chat()` can route to five different providers of varying
-    instruction-following discipline (Groq, OpenRouter, Cerebras, SambaNova,
+    that `chat()` can route to four different providers of varying
+    instruction-following discipline (Groq, OpenRouter, SambaNova,
     Ollama) — not just Claude, which tends to track unmarked prose structure
     more reliably than smaller/less-tuned models do. Every call site below
     can then refer to the tag by name in its instructions ("only cite numbers
@@ -334,9 +334,9 @@ def answer_portfolio_question(
     papers) is wrapped in a named XML tag via `_wrap_context` — `<portfolio_data>`,
     `<retrieved_news>`, `<academic_references>` — so the instructions can point
     at a specific tag ("cite ONLY <academic_references>") instead of a vaguer
-    "the context above". This matters more now that `chat()` can route to five
+    "the context above". This matters more now that `chat()` can route to four
     different providers of varying instruction-following discipline (Groq,
-    OpenRouter, Cerebras, SambaNova, Ollama), not just Claude.
+    OpenRouter, SambaNova, Ollama), not just Claude.
     """
     retrieved_block = ""
     if news_chunks:
