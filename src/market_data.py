@@ -22,7 +22,6 @@ from __future__ import annotations
 import datetime as dt
 import logging
 import os
-import re
 import tempfile
 import time
 from typing import Any, Callable
@@ -34,6 +33,7 @@ import yfinance as yf
 
 from src.cache import cached
 from src.config import LLM_SETTINGS, VIX_TICKER
+from src.http_utils import redact_secrets
 
 logger = logging.getLogger(__name__)
 
@@ -74,16 +74,11 @@ def _configure_yfinance_cache() -> None:
 _configure_yfinance_cache()  # run once at import time, before any yf.download() call below
 
 
-def _redact_api_key(text: str) -> str:
-    """
-    Strip any `apikey=...` query param value out of a string before it's ever
-    logged or, critically, raised as an exception message that Streamlit's
-    `st.error()` displays verbatim on screen. `requests`' HTTPError includes the
-    full request URL (query string and all) in its default __str__ — without
-    this, a failed Twelve Data call leaks the API key straight into the UI.
-    Also covers Finnhub's `token=...` param, which carries its key the same way.
-    """
-    return re.sub(r"(apikey|token)=[^&\s]+", lambda m: f"{m.group(1)}=***REDACTED***", text)
+# Strip credential query params (`apikey=`, Finnhub's `token=`, FRED's `api_key=`)
+# from any string before it is logged or raised: `requests`' HTTPError embeds the
+# full URL, and st.error() would show a raw exception on screen. One shared
+# implementation in http_utils; this name is kept for the existing call sites.
+_redact_api_key = redact_secrets
 
 TWELVEDATA_URL = "https://api.twelvedata.com/time_series"
 TWELVEDATA_MAX_ATTEMPTS = 3

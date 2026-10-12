@@ -39,7 +39,9 @@ if [ ! -f .env ]; then
 fi
 
 echo "Starting with docker compose..."
-docker compose up -d --pull always
+# --build, not --pull always: pulling would replace this fresh build with the
+# image published on Docker Hub, i.e. the previous version of the code.
+docker compose up -d --build
 
 echo ""
 echo "✓ Container is starting. Check status with:"
