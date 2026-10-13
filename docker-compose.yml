@@ -8,7 +8,9 @@ services:
     image: ${DOCKERHUB_USERNAME:-siegried}/portfolio-forecasting:latest
     container_name: portfolio-forecasting
     ports:
-      - "8501:8501"
+      # Host port: each app has its own, so all of them can run at once.
+      # Override with UI_PORT in .env; the app still listens on 8501 inside.
+      - "${UI_PORT:-8504}:8501"
     env_file:
       # Optional: every key is optional (see README), so a missing .env must not stop the stack.
       - path: .env
