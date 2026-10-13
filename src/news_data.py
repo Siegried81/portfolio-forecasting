@@ -48,6 +48,7 @@ import requests
 
 from src.cache import cached
 from src.config import LLM_SETTINGS
+from src.http_utils import redact_secrets
 
 logger = logging.getLogger(__name__)
 
@@ -88,7 +89,8 @@ def fetch_ticker_headlines(ticker: str, company_name: str | None = None, max_art
         response.raise_for_status()
         payload = response.json()
     except (requests.RequestException, ValueError) as exc:
-        logger.warning("NewsAPI fetch failed for %s: %s", ticker, exc)
+        # redact_secrets: the HTTPError text holds the full URL, `apiKey=` included.
+        logger.warning("NewsAPI fetch failed for %s: %s", ticker, redact_secrets(str(exc)))
         return []
 
     articles = payload.get("articles", [])
@@ -125,7 +127,8 @@ def fetch_finnhub_news(ticker: str, max_articles: int = 5) -> list[dict[str, Any
         response.raise_for_status()
         articles = response.json()
     except (requests.RequestException, ValueError) as exc:
-        logger.warning("Finnhub fetch failed for %s: %s", ticker, exc)
+        # redact_secrets: the HTTPError text holds the full URL, `token=` included.
+        logger.warning("Finnhub fetch failed for %s: %s", ticker, redact_secrets(str(exc)))
         return []
 
     if not isinstance(articles, list):  # Finnhub returns {} with an error message on bad symbol/key
@@ -589,11 +592,12 @@ def _trip_finnhub_sentiment_breaker_if_permanent(exc: Exception) -> None:
     if status in (401, 403):
         logger.warning(
             "Finnhub sentiment endpoint returned %s (plan-restricted or bad key) — "
-            "skipping it for the rest of this session, falling back to VADER: %s", status, exc,
+            "skipping it for the rest of this session, falling back to VADER: %s", status,
+            redact_secrets(str(exc)),  # URL in the error carries Finnhub's `token=`
         )
         _finnhub_sentiment_plan_restricted = True
     else:
-        logger.warning("Finnhub sentiment fetch failed: %s", exc)
+        logger.warning("Finnhub sentiment fetch failed: %s", redact_secrets(str(exc)))
 
 
 @cached(ttl_seconds=1800)
@@ -635,7 +639,7 @@ def fetch_finnhub_sentiment(ticker: str) -> dict[str, Any] | None:
         _trip_finnhub_sentiment_breaker_if_permanent(exc)
         return None
     except (requests.RequestException, ValueError) as exc:
-        logger.warning("Finnhub sentiment fetch failed for %s: %s", ticker, exc)
+        logger.warning("Finnhub sentiment fetch failed for %s: %s", ticker, redact_secrets(str(exc)))
         return None
 
     sentiment = payload.get("sentiment") or {}
