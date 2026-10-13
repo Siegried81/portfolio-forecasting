@@ -16,8 +16,12 @@ COPY requirements.txt .
 # CPU-only torch first: on Linux the default PyPI wheel bundles several GB of CUDA
 # libraries that Render (no GPU) never uses. requirements.txt's torch>=2.0 is then
 # already satisfied, so pip does not pull the CUDA build on top.
+# xgboost likewise: on Linux it requires nvidia-nccl (305 MB) for multi-GPU
+# training, so the image installs the CPU-only `xgboost-cpu` distribution (same
+# `xgboost` import) and drops the `xgboost` line from requirements.txt.
 RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu torch \
-    && pip install --no-cache-dir -r requirements.txt
+    && grep -v '^xgboost' requirements.txt > /tmp/requirements-cpu.txt \
+    && pip install --no-cache-dir 'xgboost-cpu>=2.0,<4.0' -r /tmp/requirements-cpu.txt
 
 COPY . .
 
