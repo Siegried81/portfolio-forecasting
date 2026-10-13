@@ -1,7 +1,7 @@
 # Portfolio Forecasting - containerised Streamlit app.
 # Build:  docker build -t portfolio-forecasting .
 # Run:    docker run -p 8501:8501 --env-file .env portfolio-forecasting
-FROM python:3.12-slim
+FROM python:3.14-slim
 
 # Prevents Python from writing .pyc files and buffers stdout (cleaner container logs)
 ENV PYTHONDONTWRITEBYTECODE=1 \
