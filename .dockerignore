@@ -17,3 +17,9 @@ __pycache__
 .vscode
 render.yaml
 README.md
+# Local tooling. .agents/skills holds Windows junctions, which the build
+# context cannot send, and the type-checker cache alone is ~200 MB.
+.agents
+.claude
+.mypy_cache
+.ruff_cache
