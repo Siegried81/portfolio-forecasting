@@ -311,6 +311,14 @@ MAX_CONTEXT_TOKENS: int = 5000
 # needs recent conversational context, not the entire session transcript.
 MAX_CHAT_HISTORY_MESSAGES: int = 20  # 10 user/assistant turns
 
+# Single source for the "not financial advice" notice SECURITY.md promises —
+# shown in the sidebar and next to every AI-generated output (analyst + chat),
+# defined once so the wording can't drift between places.
+FINANCIAL_ADVICE_DISCLAIMER: str = (
+    "⚠️ Educational tool only — not financial advice. Forecasts and AI-generated "
+    "commentary can be wrong; do your own research before making investment decisions."
+)
+
 # --- RAG chunk persistence (rag.py) --------------------------------------------------
 # How long a persisted news/filings corpus stays valid before a fresh fetch is treated
 # as more trustworthy than the cached one. News is time-sensitive — a day-old corpus is
