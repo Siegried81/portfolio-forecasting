@@ -50,6 +50,7 @@ from src.config import (
     DEFAULT_RISK_FREE_RATE,
     DEFAULT_TRANSACTION_COST_BPS,
     DEFAULT_WALK_FORWARD_WINDOWS,
+    FINANCIAL_ADVICE_DISCLAIMER,
     FORECAST_COV_METHOD_LABELS,
     FREQUENCY_TO_PERIODS_PER_YEAR,
     HORIZON_BOUNDS_BY_FREQUENCY,
@@ -204,6 +205,8 @@ def _format_ratio(x: float) -> str:
 # ----------------------------------------------------------------------------------
 def render_sidebar() -> dict:
     st.sidebar.header("Portfolio configuration")
+    # Visible on every page: SECURITY.md promises a "not financial advice" notice.
+    st.sidebar.caption(FINANCIAL_ADVICE_DISCLAIMER)
 
     def _apply_universe_preset() -> None:
         # .get(), not [...]: this callback and _apply_sector_selection below
@@ -1376,6 +1379,7 @@ def render_ai_analyst_tab(
     tickers: list[str], macro_context: dict | None = None,
 ) -> None:
     st.subheader("AI Portfolio Analyst")
+    st.caption(FINANCIAL_ADVICE_DISCLAIMER)  # repeated next to AI output, where it matters most
 
     if not LLM_SETTINGS.groq_api_key:
         st.warning(
@@ -1498,6 +1502,7 @@ def render_chatbot_tab() -> None:
     """
     st.subheader("Ask about your results")
     st.caption("Grounded in the numbers computed above — won't invent figures that aren't there.")
+    st.caption(FINANCIAL_ADVICE_DISCLAIMER)
 
     if "chat_history" not in st.session_state:
         st.session_state["chat_history"] = []
@@ -1528,7 +1533,8 @@ def render_chatbot_tab() -> None:
                 )
             except LLMUnavailableError as exc:
                 st.session_state["chat_history"].append(
-                    {"role": "assistant", "content": f"⚠️ LLM unavailable: {exc}", "error": True}
+                    # redact_secrets: a provider error may embed a request URL with its key.
+                    {"role": "assistant", "content": f"⚠️ LLM unavailable: {redact_secrets(str(exc))}", "error": True}
                 )
         # Cap history length — keep only the most recent turns (see
         # config.MAX_CHAT_HISTORY_MESSAGES's own comment for why this exists).

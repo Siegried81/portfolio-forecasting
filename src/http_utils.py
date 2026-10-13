@@ -28,12 +28,17 @@ import requests
 
 logger = logging.getLogger(__name__)
 
-_SECRET_QUERY_PARAM = re.compile(r"(api_key|apikey|token)=[^&\s]+", re.IGNORECASE)
+# `\b` anchors the param name so a word merely ending in "key"/"token" (e.g.
+# "monkey=") is left alone; `access_token`/`api_key` are listed explicitly since
+# `_` is a word char and `\b` would not split them. `key=` covers providers that
+# take a bare `key` param. IGNORECASE also catches NewsAPI's camel-case `apiKey=`.
+_SECRET_QUERY_PARAM = re.compile(r"\b(api_key|apikey|access_token|token|key)=[^&\s]+", re.IGNORECASE)
 
 
 def redact_secrets(text: str) -> str:
     """
-    Mask credential query-param values (`api_key=`, `apikey=`, `token=`) in a
+    Mask credential query-param values (`api_key=`, `apikey=`/`apiKey=`,
+    `access_token=`, `token=`, `key=`) in a
     string before it is logged. `requests`' HTTPError message embeds the full
     request URL, query string included — FRED takes its key as `api_key=`,
     so logging the raw exception would write that key into the logs.

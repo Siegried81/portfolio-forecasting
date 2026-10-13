@@ -116,7 +116,7 @@ pre-fills with the live 3-month T-bill yield. Why each choice was made:
 pytest tests/ -v
 ```
 
-474 tests across 19 files, all passing — the whole suite, run on Python 3.14 against the pinned
+494 tests across 20 files, all passing — the whole suite, run on Python 3.14 against the pinned
 `requirements.txt` (about a minute end to end; every network call is mocked, so the count does not
 depend on any API key being set). `mypy --strict` is also clean on every file in `src/`.
 
