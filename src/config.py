@@ -42,11 +42,11 @@ OPTIONAL_ETF_TICKERS: list[str] = [
 ]
 
 # --- Broader S&P 500 universe, organised by GICS sector -----------------------------
-# A curated 104-name subset (still not all 500 — see README for why: covariance
+# A curated 107-name subset (still not all 500 — see README for why: covariance
 # estimation degrades badly with hundreds of names and a few years of daily data;
 # real buy-side desks use factor models or sector-constrained universes for
 # exactly this reason, not a raw 500x500 mean-variance optimisation). Each sector
-# has 7-12 liquid large-caps — enough for a genuinely diversified sub-portfolio, not
+# has 7-15 liquid large-caps — enough for a genuinely diversified sub-portfolio, not
 # just one or two tokens. Materials/Real Estate/Utilities sit at 7 each: an honest
 # reflection of how few S&P mega-caps those sectors actually contain, not an oversight.
 # For universes at the wide end of this range (~40+ names), see the PCA factor-model

@@ -41,7 +41,7 @@ filings.
 - [Full technical write-up](#full-technical-write-up) → [technical_deep_dive.md](docs/technical_deep_dive.md)
 - [Setup](#setup)
 - [Deployment](#deployment)
-- [License](#license)
+- [License](LICENSE) (MIT)
 
 ## Screenshots
 
@@ -74,10 +74,10 @@ streamlit run app.py
 | Key | Where to get it | Required? |
 |---|---|---|
 | `GROQ_API_KEY` (+ optional `_2` .. `_5`) | [console.groq.com](https://console.groq.com) | Optional — AI Analyst tab falls back through the hosted providers below, then local Ollama, without it |
-| `NEWSAPI_KEY` | [newsapi.org](https://newsapi.org/register) (100 req/day free) | Optional — one of three news/filing sources; digest still works with any subset configured |
+| `NEWSAPI_KEY` | [newsapi.org](https://newsapi.org/register) (100 req/day free) | Optional — one of six news/filing sources; digest still works with any subset configured |
 | `FINNHUB_API_KEY` | [finnhub.io](https://finnhub.io/register) (free, 60 req/**min**) | Optional — dedicated financial-news API, cross-referenced alongside NewsAPI and SEC EDGAR; also the primary source for per-ticker fundamentals |
 | `FRED_API_KEY` | [fred.stlouisfed.org](https://fred.stlouisfed.org/docs/api/api_key.html) | Optional — risk-free rate slider and macro panel fall back to a fixed 4% default / n/a without it |
-| `TWELVEDATA_API_KEY` | [twelvedata.com](https://twelvedata.com) (free, 800 req/day) | Optional — fallback market data source if Yahoo Finance is unreachable, and fallback fundamentals source (mainly covers `AAPL` on the free tier — see caveat below) |
+| `TWELVEDATA_API_KEY` | [twelvedata.com](https://twelvedata.com) (free, 800 req/day) | Optional — fallback market data source if Yahoo Finance is unreachable, and fallback fundamentals source (mainly covers `AAPL` on the free tier — see the caveat in [docs/technical_deep_dive.md](docs/technical_deep_dive.md)) |
 | `TIINGO_API_KEY` | [tiingo.com](https://www.tiingo.com/account/api/token) (free, 500 req/hour) | Optional — third market-data tier, tried FIRST among the three fallbacks (most generous free tier of the three) |
 | `ALPHA_VANTAGE_API_KEY` | [alphavantage.co/support/#api-key](https://www.alphavantage.co/support/#api-key) (free, 25 req/day) | Optional — fourth, last-resort market-data tier, only tried if Yahoo, Tiingo AND Twelve Data all fail |
 | `SEMANTIC_SCHOLAR_API_KEY` | [semanticscholar.org/product/api](https://www.semanticscholar.org/product/api) | Optional — genuinely optional even without one: the search endpoint works unauthenticated at a lower shared rate limit; a key just raises it |
@@ -144,7 +144,7 @@ blocks or gates anything, it's purely informational.
 
 ```bash
 python scripts/benchmark_walk_forward.py --quick          # fast subset — Naive/ETS only, no ARIMA
-python scripts/benchmark_walk_forward.py                  # full grid — adds ARIMA + a 40-asset PCA-covariance universe
+python scripts/benchmark_walk_forward.py                  # full grid — every model, with and without GARCH covariance, + a 40-asset PCA-covariance universe
 python scripts/benchmark_walk_forward.py --csv bench.csv  # also write results to CSV, to track over time
 ```
 
@@ -161,7 +161,7 @@ CI only runs it in `--quick` mode as a non-blocking smoke test that the script i
 If `pip install -r requirements.txt` fails while compiling `pandas` (a wall of Cython/C++
 compiler output ending in a `meson`/`ninja` error), you're very likely on **Python 3.14 or
 newer** on a system where pip has no prebuilt wheel to fall back on for an older `pandas` pin.
-`requirements.txt` uses minimum-version pins (`pandas>=3.0.5`, not `==2.2.2`) specifically to
+`requirements.txt` uses minimum-version pins (`pandas>=3.0.6`, not `==2.2.2`) specifically to
 avoid this — pandas only shipped working Python 3.14 wheels starting at 3.0.5 (3.0.0-3.0.4 have
 a confirmed segfault regression on 3.14). If you still hit a build error:
 
