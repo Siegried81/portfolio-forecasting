@@ -192,6 +192,7 @@ portfolio-forecasting/
 │   ├── test_news_sentiment.py
 │   ├── test_optimization.py
 │   ├── test_rag.py
+│   ├── test_secret_redaction.py
 │   ├── test_timeseries_diagnostics.py
 │   └── test_volatility_forecasting.py
 ├── scripts/
@@ -204,7 +205,8 @@ portfolio-forecasting/
 ├── images/                      # screenshots referenced in SCREENSHOTS.md
 ├── .github/
 │   └── workflows/
-│       └── ci.yml                # pytest + mypy --strict (blocking) + benchmark smoke test (non-blocking) on every push/PR
+│       ├── ci.yml                # pytest + mypy --strict (blocking) + benchmark smoke test (non-blocking) on every push/PR
+│       └── publish.yml           # builds the Docker image, checks it answers, pushes to GHCR (+ Docker Hub if configured)
 ├── .streamlit/
 │   └── config.toml               # theme/UI config — tracked (unlike secrets.toml, see .gitignore)
 ├── .dockerignore
@@ -213,7 +215,7 @@ portfolio-forecasting/
 ├── build-docker.sh / deploy.sh    # local build/run helpers (WSL, Linux/macOS)
 ├── docker-compose.yml             # local Docker run — optional `redis` service via `--profile with-redis`
 ├── Dockerfile                     # containerised run — also the base for Render's `runtime: docker`
-├── env.example                    # copy to .env and fill in your keys
+├── .env.example                   # copy to .env and fill in your keys
 ├── LICENSE
 ├── README.md
 ├── render.yaml                    # Render Blueprint (Infrastructure as Code)
@@ -236,7 +238,7 @@ than silently swapped:
 
 | Brief suggests | Used instead | Why |
 |---|---|---|
-| **Kats** for forecasting | **statsmodels** (ARIMA, Holt-Winters ETS, the Theta method) + a naive random-walk baseline, plus a small from-scratch **LSTM** (PyTorch, CPU-only) as a fifth, heavier option | Kats' last PyPI release was **0.2.0 on 15 March 2022** — [pypi.org/project/kats/#history](https://pypi.org/project/kats/#history) — nothing published since, so it predates ~3.5 years of pandas/numpy releases. statsmodels is the actively-maintained, industry-standard alternative. The LSTM trains fresh per asset per call (no pretrained universal price model exists to load) — see `forecasting.lstm_forecast`'s own docstring for the honest speed trade-off against the other four. |
+| **Kats** for forecasting | **statsmodels** (ARIMA, Holt-Winters ETS, the Theta method) + a naive random-walk baseline, plus a gradient-boosted tree **ML regression** (xgboost / scikit-learn) and a small from-scratch **LSTM** (PyTorch, CPU-only) as the two ML options | Kats' last PyPI release was **0.2.0 on 15 March 2022** — [pypi.org/project/kats/#history](https://pypi.org/project/kats/#history) — nothing published since, so it predates more than four years of pandas/numpy releases. statsmodels is the actively-maintained, industry-standard alternative. The LSTM trains fresh per asset per call (no pretrained universal price model exists to load) — see `forecasting.lstm_forecast`'s own docstring for the honest speed trade-off against the other five. |
 | **Riskfolio-Lib** for optimization | **PyPortfolioOpt** | Two alternatives were evaluated against PyPortfolioOpt, both rejected for the same reason: real capability this project's scope doesn't need, at a heavier dependency cost. **Riskfolio-Lib** ([pypi.org/project/Riskfolio-Lib](https://pypi.org/project/Riskfolio-Lib/)) is built on `cvxpy` with 12 convex risk measures, Black-Litterman, risk factors, tracking-error/turnover constraints. **skfolio** ([skfolio.org](https://skfolio.org/)) is newer (2026) and scikit-learn-native (`fit`/`predict`, `GridSearchCV`-compatible) — Mean-Risk, Risk Budgeting, Hierarchical Risk Parity, Black-Litterman, Ledoit-Wolf/Gerber/denoising covariance estimators, walk-forward cross-validation built in — genuinely closer to this project's own PCA-factor-model and walk-forward additions than Riskfolio-Lib is, but still pulls in `cvxpy` + `joblib` + its own `plotly` pin, and its `fit`/`predict` API is a full rewrite of `optimization.py`, not a drop-in swap. PyPortfolioOpt ([pypi.org/project/pyportfolioopt](https://pypi.org/project/pyportfolioopt/)) covers exactly max-Sharpe/min-vol/efficient-frontier with the lightest footprint of the three. **If the brief literally requires a feature none of PyPortfolioOpt's surface has** (e.g. Black-Litterman by name, or a specific convex risk measure like CVaR-native optimization) **skfolio is the one to migrate to**, not Riskfolio-Lib — same reasoning as the PCA-factor-model addition already in this codebase: skfolio's built-in walk-forward cross-validation and Ledoit-Wolf/Gerber covariance estimators overlap directly with `backtesting.py`/`factor_models.py`'s own hand-rolled versions, so a migration would consolidate rather than duplicate. Absent that literal requirement, staying on PyPortfolioOpt keeps the dependency surface and `optimization.py`'s API exactly as documented above — no functional gain from switching without a concrete need driving it. |
 | **GitHub Pages** for deployment | **Streamlit Community Cloud** (primary) + **Render** (backup, via `render.yaml` + `Dockerfile`) | GitHub Pages serves static files only — "GitHub Pages does not support server-side languages such as PHP, Ruby, or Python" ([official GitHub Docs](https://docs.github.com/articles/creating-project-pages-manually)) — it cannot run a Streamlit server process. |
 | **ISM Manufacturing PMI** for macro context | **Industrial Production Index (FRED `INDPRO`)** | ISM's PMI is a paid, proprietary survey-based series — not available on FRED or any free API. Industrial Production is the closest legitimate free alternative: real output data rather than a survey diffusion index, but it captures the same underlying signal (manufacturing-sector momentum). |
@@ -311,7 +313,7 @@ finance-relevant data point (a real macro rate) instead of a redundant one.
 
 ## Forecasting models, and where ML/NLP actually show up in this repo
 
-`forecasting.py` ships five models, in increasing order of sophistication —
+`forecasting.py` ships six models, in increasing order of sophistication —
 `FORECAST_MODELS` in that module is the single source of truth for the set;
 `app.py`'s sidebar selectbox and `scripts/benchmark_walk_forward.py`'s grid
 both read from it, so a new model added there needs no changes anywhere else
@@ -323,13 +325,15 @@ to become selectable and benchmarkable.
 | **ETS (Holt linear trend)** | Exponential Smoothing with a linear trend component. Few assumptions, robust default for noisy financial series. | Classical statistics |
 | **Theta method** | Splits the series into a long-term linear trend (OLS, extrapolated directly) and a short-term residual component (the trend's own residuals, forecast via Simple Exponential Smoothing), then adds the two back together. The strongest overall performer in the original M3 forecasting competition despite having no hyperparameters to tune — a useful, cheap middle point between ETS and ARIMA on the sophistication/speed spectrum. See `forecasting.theta_forecast`'s own docstring for why detrending before applying SES matters (skipping it would systematically under-forecast any real trend, since SES has no trend term of its own). | Classical statistics |
 | **ARIMA (auto order)** | ARIMA(p,1,q) with a small AIC grid search over p and q (d=1 fixed, since price levels are non-stationary by construction). Captures autocorrelation structure the simpler models miss, at the cost of being slower and more prone to overfitting on short series. | Classical statistics |
-| **LSTM (recurrent neural net)** | A small, from-scratch-trained recurrent network, fit fresh per asset per call (no pretrained universal price model exists to load). The one genuinely ML-based member of this set. | **Machine learning** (deep learning) |
+| **ML regression (gradient boosting)** | Gradient-boosted trees (xgboost when available, scikit-learn otherwise) on lagged returns plus their rolling mean/std, forecasting one step at a time and feeding each prediction back in. Trains in milliseconds per asset. | **Machine learning** (tabular) |
+| **LSTM (recurrent neural net)** | A small, from-scratch-trained recurrent network, fit fresh per asset per call (no pretrained universal price model exists to load). The deep-learning member of this set. | **Machine learning** (deep learning) |
 
 **Where ML and NLP actually appear across the whole codebase**, not just in
 forecasting — worth stating explicitly since "uses AI" is thrown around
 loosely and this project tries not to:
 
-- **Machine learning**: `lstm_forecast` (deep learning, per-asset recurrent
+- **Machine learning**: `ml_regression_forecast` (gradient-boosted trees on
+  lagged returns); `lstm_forecast` (deep learning, per-asset recurrent
   network); `factor_models.pca_factor_cov` (PCA — unsupervised ML, used for
   covariance estimation on wide universes); FinBERT sentiment
   (`news_data.fetch_finbert_sentiment` — a pretrained financial-domain
@@ -345,7 +349,7 @@ loosely and this project tries not to:
   (forecasting.py) and GARCH(1,1) (`volatility_forecasting.py`) — all
   parametric models fit by maximum likelihood or least squares, not learned
   from data the way a neural net or gradient-boosted tree is. Grouping these
-  with LSTM as "the AI part of the app" would overstate what they are; the
+  with the ML regression and LSTM as "the AI part of the app" would overstate what they are; the
   README and this document both call them out as classical statistics for
   that reason.
 
@@ -448,10 +452,10 @@ not the same as that number being reliable.
 Beyond the brief's 5 default equities and the ETF/commodity sleeve:
 
 **Universe presets** — sidebar "Universe preset" selector:
-- *Brief default (5)*: AAPL/MSFT/TSLA/AMZN/GOOG, as specified.
+- *By default (5)*: AAPL/MSFT/TSLA/AMZN/GOOG, the brief's defaults.
 - *Mega Caps (15)*: the largest, most-recognised S&P 500 names across sectors — a one-click
   "give me something sensible" option.
-- *Custom / sector picker*: build a universe from 11 GICS sectors (7-12 liquid names each, 104
+- *Custom / sector picker*: build a universe from 11 GICS sectors (7-15 liquid names each, 107
   tickers total — expanded from an initial ~59). Deliberately NOT all ~500 S&P
   constituents — see the callout below.
 
@@ -460,14 +464,14 @@ names and only a few years of daily history (the classic "more parameters than d
 real buy-side desks handle this with factor models (Barra, Fama-French) or sector-constrained
 universes, not a raw 500×500 mean-variance optimisation on a handful of return observations per
 pair. A curated, sector-organised universe is the professionally correct choice here, not a
-scope-limited shortcut. **The 104-ticker universe already sits at the point where this matters in
+scope-limited shortcut. **The 107-ticker universe already sits at the point where this matters in
 practice** — which is exactly why the covariance estimator below exists.
 
 **Covariance estimation: Ledoit-Wolf shrinkage vs. PCA factor model** (sidebar
 "Covariance estimator")
 
-The math, precisely: with N assets, a covariance matrix has N(N+1)/2 free parameters — 5,460 for
-this app's full 104-ticker universe, against at best a few thousand daily observations. Ledoit-Wolf
+The math, precisely: with N assets, a covariance matrix has N(N+1)/2 free parameters — 5,778 for
+this app's full 107-ticker universe, against at best a few thousand daily observations. Ledoit-Wolf
 shrinkage (the long-standing default here) is a real fix for a *small* universe's noisy sample
 covariance, but it doesn't remove the underlying degrees-of-freedom problem — it just shrinks
 toward a target. A **PCA statistical factor model** does remove it: assume returns are driven by a
@@ -495,10 +499,10 @@ as a Barra reimplementation.
   reduction work.
 
 **Advanced risk-adjusted metrics** (Calmar, Omega, Information Ratio, Treynor, Beta) — full
-formulas and interpretation guidance in **"Understanding the KPIs"** near the top of this README.
+formulas and interpretation guidance in **"Understanding the KPIs"** near the top of this document.
 
 **Per-ticker fundamentals** (Overview tab, fetched on demand via a button — not automatic, to
-conserve API quota): market cap, trailing P/E, beta, dividend yield, price-to-book, 52-week range.
+conserve API quota): market cap, trailing and forward P/E, beta, dividend yield, 52-week range.
 
 **Source chain (after live testing exposed a real limitation):** Twelve Data's
 `/statistics` endpoint turned out to be restricted on the free tier to their public demo symbol
@@ -586,7 +590,7 @@ Tools and references the original brief pointed to. Kept as-is unless noted othe
    Ollama).
 
 4. **Per-ticker forecasting and news fetching were the two biggest wall-clock costs** (ARIMA
-   fitting across many windows/assets; three sequential HTTP calls per ticker for the news
+   fitting across many windows/assets; seven sequential source fetches per ticker for the news
    digest). I parallelised both with `concurrent.futures.ThreadPoolExecutor`, capped at 8 workers
    to avoid oversubscribing a small container. I used threads rather than processes for the ARIMA
    case specifically: the fitting is dominated by numpy/scipy linear algebra, which releases the
@@ -684,9 +688,10 @@ Things I'm aware of and chose not to fix within this project's scope, rather tha
   forecast-driven allocation. The Forecast-based portfolio, in both the single-window comparison
   and the walk-forward validation, can instead use `volatility_forecasting.garch_forecast_cov` —
   GARCH(1,1)-forecasted volatility per asset, genuinely reacting to recent conditions rather than
-  averaging over the whole history — via `run_walk_forward(..., forecast_cov_method="garch")` — implemented and unit-tested (`test_run_walk_forward_garch_forecast_cov_method_changes_forecast_based_weights` in
-  `test_backtesting.py`), but **not yet exposed as a sidebar control** in `app.py` — currently only
-  reachable by calling the function directly (a script, a notebook, or a future UI addition).. Correlation between assets still comes
+  averaging over the whole history — chosen in the sidebar's "Forecast-based covariance" selector
+  (historical by default), or via `run_walk_forward(..., forecast_cov_method="garch")` in code;
+  unit-tested in `test_backtesting.py`
+  (`test_run_walk_forward_garch_forecast_cov_method_changes_forecast_based_weights`). Correlation between assets still comes
   from history (Ledoit-Wolf shrinkage) even in GARCH mode: a true correlation forecast needs a
   DCC-GARCH (Dynamic Conditional Correlation) model, and no well-maintained Python package
   implements that robustly today — see `volatility_forecasting.py`'s docstring for the full
@@ -716,7 +721,7 @@ Things I'm aware of and chose not to fix within this project's scope, rather tha
 The longer-term roadmap I'd tackle with a real budget and a production SLA to hit, rather than a
 bootcamp deadline. The two nearest-term, concrete items from this list — SEC EDGAR CIK matching
 and CI hardening — are done (see `.github/workflows/ci.yml`); load testing now
-has a starting script too (see "Capacity benchmarking" under Setup). What's left:
+has a starting script too (see "Capacity benchmarking" under Setup in the [README](../README.md#capacity-benchmarking)). What's left:
 
 1. **Cloud deployment (Azure)** — move off Render's free tier onto Azure Container Apps or AKS:
    autoscaling under real traffic, Azure Key Vault for secrets instead of `.env`/dashboard env vars,
@@ -732,13 +737,13 @@ has a starting script too (see "Capacity benchmarking" under Setup). What's left
    tickers, which quietly biases any backtest toward survivors), and proper corporate-action
    adjustments (splits, spin-offs) instead of relying on adjusted-close alone.
 
-3. **Price forecasting with even more compute behind it** — the naive/ETS/Theta/ARIMA/LSTM set (see
+3. **Price forecasting with even more compute behind it** — the naive/ETS/Theta/ARIMA/ML-regression/LSTM set (see
    "Key design decisions" above) now spans classical statistics through a from-scratch neural
    network. GARCH-forecasted volatility closes half of the forecasting gap (see
    `volatility_forecasting.py`); mu itself is the remaining half, and `lstm_forecast` is a first,
    deliberately small step into it, not the ceiling. With dedicated GPU compute, the next tier is a
    proper hyperparameter search per asset (lookback window, hidden size, layer count) instead of
-   fixed defaults, an ensemble across all four models weighted by each one's own walk-forward track
+   fixed defaults, an ensemble across all six models weighted by each one's own walk-forward track
    record, and enough budget to test whether a transformer-based forecaster (e.g. a fine-tuned
    time-series foundation model) actually beats naive out-of-sample on this universe — which, per
    the walk-forward results already in this repo, is a real, open question, not a given.
