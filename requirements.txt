@@ -12,9 +12,9 @@
 # upgrade is a deliberate, tested commit rather than a surprise.
 
 # --- Core app ---
-streamlit>=1.65.0,<2.0.0
+streamlit>=1.66.0,<2.0.0
 pandas>=3.0.6,<4.0.0
-numpy>=2.5.3,<3.0
+numpy>=2.5.4,<3.0
 python-dotenv>=1.2.4,<2.0.0
 
 # --- Market data (free) ---
