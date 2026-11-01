@@ -12,8 +12,8 @@
 # upgrade is a deliberate, tested commit rather than a surprise.
 
 # --- Core app ---
-streamlit>=1.66.0,<2.0.0
-pandas>=3.0.6,<4.0.0
+streamlit>=1.66.1,<2.0.0
+pandas>=3.1.0,<4.0.0
 numpy>=2.5.4,<3.0
 python-dotenv>=1.2.4,<2.0.0
 
@@ -49,10 +49,10 @@ arch>=8.0.0,<9.0
 # that are dead weight here, so for a test/CI box install torch from PyTorch's
 # CPU index first and let this line be satisfied by it:
 #   pip install --index-url https://download.pytorch.org/whl/cpu torch
-torch>=2.14.1,<3.0
+torch>=2.15.0,<3.0
 
 # --- Optional production cache (src/cache.py) ---
 redis>=8.1.0,<9.0
 
 # --- Tests ---
-pytest>=9.1.1,<10.0.0
+pytest>=9.2.0,<10.0.0
