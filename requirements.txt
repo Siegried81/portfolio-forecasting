@@ -30,6 +30,13 @@ statsmodels>=0.15.0,<0.16.0
 # --- Visualisation ---
 plotly>=7.1.0,<8.0.0
 
+# --- JSON API (api/main.py) ---
+# Additive HTTP layer over the same src/ functions the Streamlit app uses.
+# Both are 0.x, so the ceiling sits at the next MINOR (the breaking bump under
+# the convention above); verified green on fastapi 0.162.0, uvicorn 0.54.0.
+fastapi>=0.162.0,<0.163.0
+uvicorn>=0.54.0,<0.55.0
+
 # --- LLM ---
 groq>=1.7.0,<2.0.0
 requests>=2.34.2,<3.0.0
