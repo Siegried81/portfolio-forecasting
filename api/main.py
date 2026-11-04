@@ -1,10 +1,8 @@
 """FastAPI JSON API exposing the portfolio-forecasting engine over HTTP.
 
-Each endpoint is a thin wrapper around a function that app.py (the Streamlit
-UI) already calls, so the API adds no analytics of its own — it only fetches
-prices, hands them to the existing src/ functions, and serialises the result.
-This keeps the two front-ends in lock-step: a change to the forecasting or
-optimization logic shows up identically in the app and in the API.
+Each endpoint wraps a function app.py already calls. The API adds no analytics
+of its own: it fetches prices, hands them to src/, and serialises the result.
+Change the forecasting or optimization code and both front-ends pick it up.
 
 Launch:
     python -m uvicorn api.main:app --host 0.0.0.0 --port 8004
@@ -78,7 +76,7 @@ class AskRequest(BaseModel):
 
 @app.get("/api/health")
 def health() -> dict[str, str]:
-    """Liveness probe — returns as long as the process is up."""
+    """Liveness probe. Returns as long as the process is up."""
     return {"status": "ok"}
 
 
@@ -93,10 +91,6 @@ def forecast(request: ForecastRequest) -> dict:
     try:
         prices = fetch_adjusted_close(request.tickers, start, end)
         forecasts = forecast_all_assets(prices, request.horizon, request.model_name)
-    except LLMUnavailableError:
-        # Not expected on this path, but re-raised explicitly so it can never
-        # be swallowed by the broad computation handler below.
-        raise
     except Exception as exc:
         # Unknown model name, empty/bad price data, fetch failure: all caller-
         # or data-driven, so 422 (unprocessable) rather than a 500.
@@ -136,8 +130,8 @@ def ask(request: AskRequest) -> dict:
             request.question, request.results_context, chat_history=[]
         )
     except LLMUnavailableError as exc:
-        # Every LLM backend failed — a transient upstream outage, not a bad
-        # request, so 503 (service unavailable) is the honest status.
+        # Every LLM backend failed. That's an upstream outage, not a bad
+        # request, so 503.
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc

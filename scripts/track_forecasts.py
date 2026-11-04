@@ -1,18 +1,15 @@
 """
 Opt-in MLflow experiment tracking for the forecasting models.
 
-Why this exists: the repo already evaluates its six forecasting models
-out-of-sample with the expanding-window walk-forward backtest in
-src.backtesting. That backtest is run once and its numbers are read off the
-screen; nothing records, across runs, how a model did with which horizon on
-which tickers. This script is the thin bridge that writes each walk-forward
-run to an MLflow experiment so the comparison is persisted and browsable.
+The walk-forward backtest in src.backtesting already scores the six models
+out of sample, but nothing keeps those numbers between runs. This script logs
+each run to a local MLflow experiment, so you can compare models, horizons and
+tickers later.
 
-It is deliberately additive: it reuses forecast_all_assets, run_walk_forward,
-summarise_walk_forward and forecast_win_rate unchanged, and logs their own
-metrics. It does NOT redefine any measurement. The tracking store is a LOCAL
-file store (mlruns/ by default), so no MLflow server is needed — pointing
-MLFLOW at a directory makes mlflow create the store on first write.
+It reuses forecast_all_assets, run_walk_forward, summarise_walk_forward and
+forecast_win_rate as they are and logs their numbers. It doesn't redefine any
+measurement. The store is a local directory (mlruns/ by default); mlflow
+creates it on first write, no server needed.
 
 Usage:
     # Track the default universe over real market data (network fetch):
@@ -35,10 +32,11 @@ import pandas as pd
 
 # MLflow 3.x put the local filesystem tracking backend ("./mlruns") in
 # maintenance mode: it raises unless this opt-out is set, steering users to a
-# database backend. A local file store is exactly what this script wants — it
-# needs no server and no extra service — so we take the documented opt-out.
-# setdefault, not a hard set, so a caller who deliberately chose otherwise
-# (e.g. a sqlite backend via MLFLOW_TRACKING_URI) keeps their choice.
+# database backend. A local file store is exactly what this script wants, it
+# needs no server and no extra service, so we take the documented opt-out.
+# setdefault so a value already exported in the shell wins. This script always
+# points mlflow at a local directory (see _tracking_uri); it doesn't read
+# MLFLOW_TRACKING_URI.
 os.environ.setdefault("MLFLOW_ALLOW_FILE_STORE", "true")
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -63,7 +61,7 @@ DEFAULT_TRACKING_DIR = Path(__file__).resolve().parent.parent / "mlruns"
 DEFAULT_EXPERIMENT_NAME = "portfolio-forecasting"
 
 # The walk-forward summary reports mean and std of these per portfolio type.
-# We log the Forecast-based portfolio's means plus the cross-model win rate —
+# We log the Forecast-based portfolio's means plus the cross-model win rate,
 # the numbers a "which model should I trust?" comparison actually turns on.
 _SUMMARY_METRICS = [
     "annual_return",
@@ -90,14 +88,9 @@ def _date_range(prices: pd.DataFrame) -> tuple[str, str]:
     """Start/end of the price index as ISO dates, or empty strings if the
     index is not datetime-like (e.g. a plain RangeIndex in a synthetic test)."""
     idx = prices.index
-    if len(idx) == 0:
+    if len(idx) == 0 or not isinstance(idx, pd.DatetimeIndex):
         return "", ""
-    try:
-        start = pd.Timestamp(idx.min()).date().isoformat()
-        end = pd.Timestamp(idx.max()).date().isoformat()
-    except (TypeError, ValueError):
-        return "", ""
-    return start, end
+    return idx.min().date().isoformat(), idx.max().date().isoformat()
 
 
 def track_model_runs(
@@ -124,9 +117,8 @@ def track_model_runs(
     drawdown across windows, plus forecast_win_rate (the fraction of windows
     the forecast beat the plain historical portfolio on Sharpe). The raw
     per-window results, the summary table and the model's forecast over the
-    full history are attached as CSV artifacts — the "model output" worth
-    keeping, since the statistical/ML models here have no single persisted
-    estimator object to pickle.
+    full history are attached as CSV artifacts, the closest thing to a model
+    output here, since these models have no fitted object worth pickling.
 
     Returns the MLflow run id of each logged run, in model order. Imports
     mlflow lazily so importing this module (and the rest of the test suite)
@@ -253,7 +245,7 @@ def main() -> None:
     parser.add_argument("--models", nargs="+", default=None,
                         help="Subset of model names to track (default: all).")
     parser.add_argument("--tracking-dir", type=Path, default=None,
-                        help="Local MLflow file store directory (default: ./mlruns).")
+                        help="Local MLflow file store directory (default: mlruns/ at the repo root).")
     parser.add_argument("--experiment", default=DEFAULT_EXPERIMENT_NAME,
                         help="MLflow experiment name.")
     args = parser.parse_args()
