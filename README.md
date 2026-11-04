@@ -116,7 +116,7 @@ pre-fills with the live 3-month T-bill yield. Why each choice was made:
 pytest tests/ -v
 ```
 
-511 tests across 22 files, all passing — the whole suite, run on Python 3.14 against the pinned
+512 tests across 22 files, all passing — the whole suite, run on Python 3.14 against the pinned
 `requirements.txt` (about a minute end to end; every network call is mocked, so the count does not
 depend on any API key being set). `mypy --strict` is also clean on every file in `src/`.
 
@@ -155,6 +155,29 @@ models, and the GARCH forecast-covariance toggle. Synthetic price data (same gen
 `pytest`/CI gating on purpose: this is for capacity planning before a real deployment (how long
 does one run take, how does that scale with universe size), not a pass/fail correctness check —
 CI only runs it in `--quick` mode as a non-blocking smoke test that the script itself still works.
+
+### JSON API
+
+```bash
+python -m uvicorn api.main:app --port 8004
+```
+
+`api/main.py` exposes `/forecast`, `/optimize`, `/ask` and `/api/health`. Each one calls the same
+`src/` function the Streamlit app calls, over the last 5 years of daily prices. It adds no
+analytics of its own. Tests mock the price fetch and the LLM (`tests/test_api.py`).
+
+### Track the models with MLflow
+
+```bash
+python scripts/track_forecasts.py --tickers AAPL MSFT SPY --years 3
+MLFLOW_ALLOW_FILE_STORE=true mlflow ui --backend-store-uri file:./mlruns
+```
+
+One MLflow run per model, with the walk-forward backtest's own metrics (mean annual return,
+volatility, Sharpe, Sortino, max drawdown of the forecast-based portfolio, plus the win rate) and
+the result CSVs as artifacts. Local file store under `mlruns/` (git-ignored); no server needed.
+MLflow 3 refuses to open a file store without `MLFLOW_ALLOW_FILE_STORE=true`; the script sets it
+for itself, `mlflow ui` in a fresh shell doesn't.
 
 ### Troubleshooting: `pandas` fails to build from source
 

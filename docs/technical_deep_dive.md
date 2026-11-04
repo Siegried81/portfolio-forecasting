@@ -153,6 +153,9 @@ one actually answered for each ticker.
 ```
 portfolio-forecasting/
 ├── app.py                       # Streamlit UI — orchestration only, no finance/LLM logic
+├── api/
+│   ├── __init__.py
+│   └── main.py                  # FastAPI wrapper over src/ (same functions as app.py)
 ├── src/
 │   ├── __init__.py
 │   ├── academic_search.py       # Semantic Scholar + arXiv paper search — grounds methodological chatbot answers in real citations
@@ -177,6 +180,7 @@ portfolio-forecasting/
 │   ├── __init__.py
 │   ├── test_academic_search.py
 │   ├── test_ai_features.py
+│   ├── test_api.py
 │   ├── test_backtesting.py
 │   ├── test_cache.py
 │   ├── test_config.py
@@ -194,10 +198,12 @@ portfolio-forecasting/
 │   ├── test_rag.py
 │   ├── test_secret_redaction.py
 │   ├── test_timeseries_diagnostics.py
+│   ├── test_track_forecasts.py
 │   └── test_volatility_forecasting.py
 ├── scripts/
 │   ├── benchmark_walk_forward.py  # capacity-planning benchmark for run_walk_forward (not gated in CI, run manually)
-│   └── check_env.py               # one-command report of which optional API keys are configured
+│   ├── check_env.py               # one-command report of which optional API keys are configured
+│   └── track_forecasts.py         # opt-in MLflow logging of the walk-forward backtest, one run per model
 ├── evals/
 │   └── chatbot_groundedness.py    # LLM-as-judge groundedness eval — not gated in CI, run manually
 ├── docs/

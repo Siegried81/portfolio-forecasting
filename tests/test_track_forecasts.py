@@ -1,12 +1,10 @@
 """
-Tests for scripts/track_forecasts.py — the opt-in MLflow tracking bridge.
+Tests for scripts/track_forecasts.py, the opt-in MLflow tracking bridge.
 
-These run WITHOUT any MLflow server: track_model_runs is pointed at a local
-file store under tmp_path, exactly as the script defaults to ./mlruns in
-production. No network is touched — track_model_runs takes a price frame
-directly, and the one entrypoint that would fetch market data
-(_fetch_prices / main) has its fetch mocked here so the suite never issues an
-HTTP request.
+No MLflow server: every test points track_model_runs at a file store under
+tmp_path, as the script defaults to mlruns/ at the repo root. No network
+either: track_model_runs takes a price frame, and the one path that fetches
+(main via _fetch_prices) has its fetch mocked.
 """
 from __future__ import annotations
 
@@ -94,6 +92,14 @@ def test_track_model_runs_one_run_per_model(tmp_path):
     client = _client(tmp_path)
     logged_models = {client.get_run(rid).data.params["model_name"] for rid in run_ids}
     assert logged_models == set(models)
+
+
+def test_date_range_returns_empty_strings_for_non_datetime_index():
+    """A RangeIndex has no dates to report; the params must be empty, not the
+    epoch that pd.Timestamp(0) would give."""
+    prices = pd.DataFrame({"AAA": [1.0, 2.0, 3.0], "BBB": [2.0, 3.0, 4.0]})
+    assert isinstance(prices.index, pd.RangeIndex)
+    assert tf._date_range(prices) == ("", "")
 
 
 def test_track_model_runs_rejects_unknown_model(tmp_path):

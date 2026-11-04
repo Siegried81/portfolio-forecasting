@@ -3,9 +3,9 @@
 Fully mocked network: the market-data fetch is replaced with a small synthetic
 prices DataFrame and the LLM `chat` call is replaced with a canned response, so
 nothing here touches the real Yahoo/Groq/etc. backends. The real forecasting
-and optimization code runs on the synthetic prices on purpose — those are pure
-numeric functions with no network, and running them for real is what proves the
-endpoints are wired to the same engine the Streamlit app uses.
+and optimization code runs on the synthetic prices on purpose. It's pure
+numeric code with no network, and running it is what proves the endpoints use
+the same engine as the app.
 """
 import datetime as dt
 
@@ -25,7 +25,7 @@ def _synthetic_prices(tickers: list[str], rows: int = 300) -> pd.DataFrame:
     """A deterministic daily price history: a gentle upward trend plus a fixed
     per-ticker offset, enough rows for the trend models and covariance to fit.
 
-    Seeded so every run sees the same numbers — a flaky optimizer result would
+    Seeded so every run sees the same numbers. A flaky optimizer result would
     otherwise look like a real regression.
     """
     rng = np.random.default_rng(42)
