@@ -18,6 +18,9 @@ venv/
 .cache/
 *.log
 
+# MLflow local file tracking store (scripts/track_forecasts.py)
+mlruns/
+
 # OS
 .DS_Store
 
