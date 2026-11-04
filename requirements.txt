@@ -61,5 +61,12 @@ torch>=2.14.1,<3.0
 # --- Optional production cache (src/cache.py) ---
 redis>=8.1.0,<9.0
 
+# --- Experiment tracking (scripts/track_forecasts.py) ---
+# Opt-in, local file store (mlruns/) — no tracking server required. Only the
+# tracking script and its test import it, so the app and API run without it.
+# Verified green on mlflow 3.18.0; ceiling at the next major per the convention
+# above.
+mlflow>=3.18.0,<4.0.0
+
 # --- Tests ---
 pytest>=9.1.1,<10.0.0
