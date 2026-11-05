@@ -1,7 +1,10 @@
 # Portfolio Forecasting - containerised Streamlit app.
 # Build:  docker build -t portfolio-forecasting .
 # Run:    docker run -p 8501:8501 --env-file .env portfolio-forecasting
-FROM python:3.15-slim
+# Stay on 3.14: arch 8.0.0 ships wheels up to cp314 only, so on 3.15 pip falls
+# back to the source archive and the slim image has no C compiler to build it.
+# Move up once arch publishes a cp315 wheel.
+FROM python:3.14-slim
 
 # Prevents Python from writing .pyc files and buffers stdout (cleaner container logs)
 ENV PYTHONDONTWRITEBYTECODE=1 \
