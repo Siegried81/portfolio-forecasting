@@ -22,9 +22,14 @@ updates:
         patterns:
           - "*"
 
-  # python:3.12-slim in the Dockerfile: security fixes of the base image.
+  # python:3.14-slim in the Dockerfile: security fixes of the base image.
+  # Minor bumps (3.14 -> 3.15) are ignored: they need wheels for every
+  # dependency first, and arch has none for 3.15 yet (see the Dockerfile).
   - package-ecosystem: docker
     directory: "/"
     schedule:
       interval: weekly
     open-pull-requests-limit: 1
+    ignore:
+      - dependency-name: python
+        update-types: ["version-update:semver-minor"]
