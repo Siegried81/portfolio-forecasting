@@ -374,3 +374,21 @@ def test_lstm_forecast_falls_back_to_naive_when_torch_cannot_be_imported(monkeyp
     result = lstm_forecast(prices, horizon=10)
     expected = naive_forecast(prices, horizon=10)
     pd.testing.assert_series_equal(result["forecast"], expected["forecast"])
+
+
+@pytest.mark.parametrize("model_fn", [ets_forecast, theta_forecast])
+def test_forecast_ignores_leading_missing_prices_of_a_late_listed_asset(model_fn):
+    # The fan chart passes one training column as is; a late listing gives it
+    # leading NaNs. The forecast must match the one on the traded prices only.
+    rng = np.random.default_rng(1)
+    index = pd.bdate_range("2022-01-03", periods=200)
+    prices = pd.Series(100 * np.cumprod(1 + rng.normal(0.0005, 0.015, 200)), index=index)
+    late_listed = prices.copy()
+    late_listed.iloc[:100] = np.nan
+
+    with_gap = model_fn(late_listed, 10)
+    traded_only = model_fn(prices.iloc[100:], 10)
+
+    for key in ("forecast", "lower", "upper"):
+        assert with_gap[key].notna().all()
+        pd.testing.assert_series_equal(with_gap[key], traded_only[key])
