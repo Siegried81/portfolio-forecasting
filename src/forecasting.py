@@ -100,7 +100,11 @@ def naive_forecast(prices: pd.Series, horizon: int, *, frequency: str = "daily")
 
 
 def ets_forecast(prices: pd.Series, horizon: int, *, frequency: str = "daily") -> ForecastResult:
-    """Holt's linear-trend Exponential Smoothing."""
+    """Holt's linear-trend Exponential Smoothing.
+
+    Missing prices are dropped first: a late-listed asset's leading NaNs
+    otherwise make the fit, and so the whole forecast, NaN."""
+    prices = prices.dropna()
     if len(prices) < MIN_HISTORY_POINTS_FOR_FORECAST:
         return naive_forecast(prices, horizon, frequency=frequency)
     # Fitting directly on `prices` (a real trading-day DatetimeIndex,
@@ -148,7 +152,11 @@ def theta_forecast(prices: pd.Series, horizon: int, *, frequency: str = "daily")
     of Fiorucci et al., 2016) — this equal-weight, two-component version has
     no extra hyperparameters to tune and was still the strongest overall
     performer in the original M3 competition despite that simplicity.
+
+    Missing prices are dropped first, as in `ets_forecast`: NaNs would make
+    the trend fit, and so the whole forecast, NaN.
     """
+    prices = prices.dropna()
     if len(prices) < MIN_HISTORY_POINTS_FOR_FORECAST:
         return naive_forecast(prices, horizon, frequency=frequency)
 

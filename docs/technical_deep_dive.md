@@ -32,8 +32,8 @@ repo-wide measured number quoted anywhere is the test count.
 |---|---|---|
 | Annualised Return | `(∏(1+r))^(n/periods) − 1` | Geometric, not arithmetic mean × n — a ±50% sequence is 0%, not the naive average (classic trap). |
 | Annualised Volatility | `std(r) × √n` | Total risk (upside + downside count equally). Not inherently "bad" — see Sortino/Omega for asymmetric views. |
-| Max Drawdown | `min[W(t)/max(W(0..t)) − 1]`, `W(t)=∏(1+r)` | Worst peak-to-trough loss — correlates most with an investor actually panic-selling. |
-| Ulcer Index | RMS of the drawdown at *every* point (Peter Martin, 1987), **in percentage points** — `√(mean( (((W/cummax(W))−1)×100)² ))` | Captures *duration* underwater, not just depth. Lower is better; 0 = never dipped below a prior peak. Reads on a 0-100 scale, unlike the fractional Max Drawdown directly above it: `[0, −0.10, 0]` scores `8.16`, not `0.0816`. |
+| Max Drawdown | `min[W(t)/max(1, W(1..t)) − 1]`, `W(t)=∏(1+r)`. The peak starts at the initial wealth of 1, so a loss in the first period counts. | Worst peak-to-trough loss; correlates most with an investor actually panic-selling. |
+| Ulcer Index | RMS of the drawdown at *every* point (Peter Martin, 1987), **in percentage points**: `√(mean( (((W/max(1, cummax(W)))−1)×100)² ))` | Captures *duration* underwater, not just depth. Lower is better; 0 = never dipped below a prior peak. Reads on a 0-100 scale, unlike the fractional Max Drawdown directly above it: `[0, −0.10, 0]` scores `8.16`, not `0.0816`. |
 | VaR 95% | 5th percentile of the return distribution (non-parametric) | "Worst 1-in-20 period loss exceeded X%" — says nothing about how much worse those periods got. |
 | CVaR 95% | `mean(r \| r ≤ VaR_95)` | Average loss beyond VaR — always at least as bad; a large VaR/CVaR gap flags a fat, dangerous tail. |
 
@@ -58,7 +58,7 @@ regardless of your ticker selection, specifically so these are always computable
 | Beta | `Cov(r, r_benchmark) / Var(r_benchmark)` | 1.0 moves with the market; >1.0 amplifies; <1.0 dampens; negative = hedge-like (rare). |
 | Information Ratio | `annualised(mean(r−r_benchmark)) / (std(r−r_benchmark)×√n)` | *Consistency* of outperformance vs. SPY, not just its size — what active-mandate reviews lead with, not Sharpe. |
 | Treynor | `(annual_return − rf) / beta` | Return per unit of *systematic* (market) risk, vs. Sharpe's total-risk denominator. |
-| Jensen's Alpha | `annual_return − [rf + beta×(annual_benchmark_return − rf)]` | Return above what CAPM predicts given the portfolio's own beta — what a CAPM-literate interviewer asks for the moment Beta is on screen. |
+| Jensen's Alpha | `annual_return − [rf + beta×(annual_benchmark_return − rf)]`, both returns annualised over the dates the portfolio and benchmark share | Return above what CAPM predicts given the portfolio's own beta, what a CAPM-literate interviewer asks for the moment Beta is on screen. |
 
 ### 4. Optimizer outputs — expected, not realized (Efficient Frontier tab)
 

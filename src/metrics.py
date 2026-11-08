@@ -164,11 +164,23 @@ def max_drawdown(returns: pd.Series) -> float:
     fraction (e.g. -0.35 = -35%). Computed on the cumulative wealth index rather
     than on prices directly so it works identically for a single asset or an
     already-weighted portfolio return series.
+
+    The running peak starts at the initial wealth of 1.0 (see `_running_peak`),
+    so a loss in the very first period counts as drawdown too.
     """
     wealth_index = (1.0 + returns).cumprod()
-    running_max = wealth_index.cummax()
-    drawdown = wealth_index / running_max - 1.0
+    drawdown = wealth_index / _running_peak(wealth_index) - 1.0
     return float(drawdown.min())
+
+
+def _running_peak(wealth_index: pd.Series) -> pd.Series:
+    """Highest wealth reached so far, including the starting wealth of 1.0.
+
+    `cummax()` alone starts the peak at the first period's CLOSE, so losses in
+    the opening periods (1.0 -> 0.9 -> 0.81) were measured from 0.9 and read
+    as a 10% drawdown instead of 19%. Short held-out windows are where this
+    bites: one bad first day is a large share of their whole path."""
+    return wealth_index.cummax().clip(lower=1.0)
 
 
 def value_at_risk(returns: pd.Series, confidence: float = 0.95) -> float:
@@ -290,9 +302,14 @@ def jensens_alpha(
     Formula: alpha = R_p − [rf + beta × (R_m − rf)], every return annualised
     first so alpha is expressed on the same annual scale as every other return
     figure in this app.
+
+    Both series are cut to their shared dates first, the same sample beta is
+    estimated on. An asset listed after the benchmark's start would otherwise
+    be judged against the benchmark's return over years it never traded.
     """
-    ann_return = annualised_return(returns, periods_per_year)
-    ann_benchmark_return = annualised_return(benchmark_returns, periods_per_year)
+    aligned = pd.concat([returns, benchmark_returns], axis=1).dropna()
+    ann_return = annualised_return(aligned.iloc[:, 0], periods_per_year)
+    ann_benchmark_return = annualised_return(aligned.iloc[:, 1], periods_per_year)
     if np.isnan(beta) or np.isnan(ann_return) or np.isnan(ann_benchmark_return):
         return float("nan")
     expected_return = risk_free_rate + beta * (ann_benchmark_return - risk_free_rate)
@@ -314,8 +331,7 @@ def ulcer_index(returns: pd.Series) -> float:
     a memorised number.
     """
     wealth_index = (1.0 + returns).cumprod()
-    running_max = wealth_index.cummax()
-    drawdown_pct = (wealth_index / running_max - 1.0) * 100.0
+    drawdown_pct = (wealth_index / _running_peak(wealth_index) - 1.0) * 100.0
     return float(np.sqrt((drawdown_pct ** 2).mean()))
 
 

@@ -296,3 +296,38 @@ def test_buy_and_hold_end_weights_follow_relative_performance():
     _, end_weights = buy_and_hold_returns(asset_returns, pd.Series({"A": 0.5, "B": 0.5}))
     assert end_weights["A"] == pytest.approx(0.55 / 1.0)
     assert end_weights.sum() == pytest.approx(1.0)
+
+
+def test_jensens_alpha_compares_portfolio_and_benchmark_over_the_same_dates():
+    # A late-listed asset that copies the benchmark exactly once it trades has
+    # beta 1 and no alpha. The benchmark's own run before the listing must not
+    # enter the CAPM prediction.
+    index = pd.bdate_range("2020-01-01", periods=8)
+    benchmark = pd.Series([0.05, 0.05, 0.05, 0.05, -0.01, 0.02, -0.01, 0.02], index=index)
+    asset = benchmark.iloc[4:]
+    alpha = jensens_alpha(asset, benchmark, beta=1.0, risk_free_rate=0.0, periods_per_year=252)
+    assert alpha == pytest.approx(0.0, abs=1e-9)
+
+
+def test_summarise_performance_alpha_is_zero_for_a_late_listed_benchmark_clone():
+    rng = np.random.default_rng(0)
+    index = pd.bdate_range("2020-01-01", periods=400)
+    benchmark = pd.Series(
+        np.concatenate([rng.normal(0.002, 0.01, 200), rng.normal(-0.0005, 0.01, 200)]), index=index,
+    )
+    summary = summarise_performance(benchmark.iloc[200:], 0.04, 252, benchmark)
+    assert summary["beta"] == pytest.approx(1.0)
+    assert summary["jensens_alpha"] == pytest.approx(0.0, abs=1e-9)
+
+
+def test_max_drawdown_counts_a_loss_in_the_first_period():
+    # Wealth starts at 1.0 before the first return: 1.0 -> 0.9 -> 0.81 is a
+    # 19% drawdown, not the 10% left when the peak starts at the first close.
+    returns = pd.Series([-0.10, -0.10])
+    assert max_drawdown(returns) == pytest.approx(-0.19, abs=1e-9)
+
+
+def test_ulcer_index_counts_a_loss_in_the_first_period():
+    # Drawdowns from the initial 1.0: -10pt, -19pt.
+    returns = pd.Series([-0.10, -0.10])
+    assert ulcer_index(returns) == pytest.approx(np.sqrt((10.0 ** 2 + 19.0 ** 2) / 2.0), abs=1e-9)
