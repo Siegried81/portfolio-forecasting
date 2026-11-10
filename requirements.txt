@@ -13,12 +13,12 @@
 
 # --- Core app ---
 streamlit>=1.66.1,<2.0.0
-pandas>=3.1.0,<4.0.0
+pandas>=3.1.1,<4.0.0
 numpy>=2.5.4,<3.0
 python-dotenv>=1.2.4,<2.0.0
 
 # --- Market data (free) ---
-yfinance>=1.7.0,<2.0.0
+yfinance>=1.8.0,<2.0.0
 
 # --- Finance / optimization ---
 PyPortfolioOpt>=1.6.0,<2.0.0
