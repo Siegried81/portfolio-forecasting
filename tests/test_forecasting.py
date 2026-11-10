@@ -116,12 +116,29 @@ def test_theta_forecast_lower_upper_bracket_the_point_forecast():
     assert (result["forecast"] <= result["upper"]).all()
 
 
-def test_theta_forecast_recovers_a_pure_linear_trend_closely():
+def test_theta_forecast_keeps_half_the_slope_of_a_pure_linear_trend():
+    # Worked by hand: on a noiseless line SES puts alpha at 1, so the level is
+    # the last price (100 + 0.5 * 149 = 174.5) and the drift term is b/2 * h.
+    # Theta keeps HALF the slope (Hyndman & Billah, 2003), so 0.25 a step,
+    # not the 0.5 of the line itself.
     idx = pd.bdate_range("2024-01-01", periods=150)
     trend_prices = pd.Series(100 + 0.5 * np.arange(150), index=idx)
     result = theta_forecast(trend_prices, horizon=10)
-    true_continuation = 100 + 0.5 * np.arange(150, 160)
-    np.testing.assert_allclose(result["forecast"].values, true_continuation, rtol=0.05)
+    expected = 174.5 + 0.25 * np.arange(1, 11)
+    np.testing.assert_allclose(result["forecast"].values, expected, atol=1e-3)
+
+
+@pytest.mark.parametrize("seed", [0, 1, 2])
+def test_theta_forecast_matches_statsmodels_theta_model(seed):
+    # Same method, no seasonal step: the forecasts must be the same numbers.
+    from statsmodels.tsa.forecasting.theta import ThetaModel
+
+    rng = np.random.default_rng(seed)
+    idx = pd.bdate_range("2022-01-03", periods=500)
+    prices = pd.Series(100 * np.cumprod(1 + rng.normal(0.0008, 0.015, 500)), index=idx)
+    ours = theta_forecast(prices, horizon=20)["forecast"].to_numpy()
+    reference = ThetaModel(prices.to_numpy(), deseasonalize=False).fit().forecast(20).to_numpy()
+    np.testing.assert_allclose(ours, reference, rtol=1e-8)
 
 
 def test_theta_forecast_falls_back_to_naive_when_ses_fails(monkeypatch):
@@ -132,7 +149,7 @@ def test_theta_forecast_falls_back_to_naive_when_ses_fails(monkeypatch):
     def _broken_ses(*args, **kwargs):
         raise RuntimeError("simulated SES failure")
 
-    monkeypatch.setattr(forecasting_module, "SimpleExpSmoothing", _broken_ses)
+    monkeypatch.setattr(forecasting_module, "StateSpaceExpSmoothing", _broken_ses)
     result = theta_forecast(prices, horizon=10)
     expected = naive_forecast(prices, horizon=10)
     pd.testing.assert_series_equal(result["forecast"], expected["forecast"])

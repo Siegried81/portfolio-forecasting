@@ -18,7 +18,10 @@ venv/
 .cache/
 *.log
 
-# MLflow local file tracking store (scripts/track_forecasts.py)
+# MLflow local tracking store (scripts/track_forecasts.py): SQLite db, its
+# artifacts, and the legacy file store from before the move to SQLite
+mlflow.db
+mlartifacts/
 mlruns/
 
 # OS

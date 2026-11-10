@@ -9,7 +9,14 @@ import pandas as pd
 from typing import Any
 
 from src.forecasting import forecast_all_assets
-from src.metrics import apply_transaction_cost, buy_and_hold_returns, compute_returns, compute_turnover, summarise_performance
+from src.metrics import (
+    apply_transaction_cost,
+    buy_and_hold_returns,
+    compute_returns,
+    compute_turnover,
+    mean_absolute_scaled_error,
+    summarise_performance,
+)
 from src.config import COV_METHOD_GARCH, DEFAULT_COV_METHOD, DEFAULT_PCA_FACTORS, MIN_HISTORY_POINTS_FOR_FORECAST
 from src.optimization import forecast_mu, historical_mu_cov, optimize_max_sharpe, resolve_weight_bounds
 
@@ -93,6 +100,7 @@ def run_walk_forward(
         w_hist = optimize_max_sharpe(mu_hist, cov_hist, risk_free_rate, weight_bounds)
 
         forecasted = forecast_all_assets(train_prices[window_tickers], horizon, forecast_model, frequency)
+        mase = _window_mase(train_prices[window_tickers], test_prices[window_tickers].iloc[1:], forecasted)
         mu_fcst = forecast_mu(train_prices.iloc[-1][window_tickers], forecasted, horizon, periods_per_year)
         if forecast_cov_method == COV_METHOD_GARCH:
             from src.volatility_forecasting import garch_forecast_cov
@@ -115,10 +123,25 @@ def run_walk_forward(
             perf = summarise_performance(port_returns, risk_free_rate, periods_per_year)
             records.append({
                 "window": window_idx, "window_end": test_prices.index[-1], "portfolio": label,
-                "n_assets": len(window_tickers), **perf,
+                "n_assets": len(window_tickers), "forecast_mase": mase, **perf,
             })
 
     return pd.DataFrame(records)
+
+
+def _window_mase(train_prices: pd.DataFrame, actual: pd.DataFrame, forecasted: pd.DataFrame) -> float:
+    """MASE of one window's price forecast, averaged over its assets.
+
+    Each asset is scaled by its own training data, so a mean across assets
+    is fair. The same number goes on every portfolio row of the window: it
+    scores the forecast, not a portfolio.
+    """
+    scores = [
+        mean_absolute_scaled_error(actual[t].to_numpy(), forecasted[t].to_numpy(), train_prices[t].to_numpy())
+        for t in actual.columns
+    ]
+    valid = [s for s in scores if pd.notna(s)]
+    return float(sum(valid) / len(valid)) if valid else float("nan")
 
 
 def tickers_with_training_history(

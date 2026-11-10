@@ -413,3 +413,35 @@ def test_run_walk_forward_charges_the_trade_back_from_drifted_weights(monkeypatc
     costly = run_walk_forward(**kwargs, transaction_cost_bps=50)
     later = free["window"] > 1
     assert (costly.loc[later, "annual_return"] < free.loc[later, "annual_return"]).all()
+
+
+def test_run_walk_forward_scores_the_price_forecast_with_mase():
+    # The naive model's forecast, scored by hand against the same windows,
+    # must match the forecast_mase column, which is shared by every
+    # portfolio row of a window.
+    from src.forecasting import naive_forecast
+    from src.metrics import mean_absolute_scaled_error
+
+    rng = np.random.default_rng(3)
+    idx = pd.bdate_range("2022-01-03", periods=200)
+    prices = pd.DataFrame(
+        {t: 100 * np.cumprod(1 + rng.normal(0.0005, 0.01, 200)) for t in ["AAA", "BBB"]}, index=idx,
+    )
+    results = run_walk_forward(
+        prices, tickers=["AAA", "BBB"], horizon=20, n_windows=3, forecast_model="Naive (random walk)",
+        risk_free_rate=0.0, periods_per_year=252, min_train_periods=100,
+    )
+    assert results.groupby("window")["forecast_mase"].nunique().eq(1).all()
+
+    windows = generate_expanding_windows(len(prices), 20, 100, 3)
+    for window_idx, (train_end, test_end) in enumerate(windows, start=1):
+        expected = np.mean([
+            mean_absolute_scaled_error(
+                prices[t].iloc[train_end:test_end].to_numpy(),
+                naive_forecast(prices[t].iloc[:train_end], 20)["forecast"].to_numpy(),
+                prices[t].iloc[:train_end].to_numpy(),
+            )
+            for t in ["AAA", "BBB"]
+        ])
+        got = results.loc[results["window"] == window_idx, "forecast_mase"].iloc[0]
+        assert got == pytest.approx(expected)

@@ -13,6 +13,7 @@ from src.metrics import (
     information_ratio,
     jensens_alpha,
     max_drawdown,
+    mean_absolute_scaled_error,
     omega_ratio,
     portfolio_returns,
     return_kurtosis,
@@ -331,3 +332,24 @@ def test_ulcer_index_counts_a_loss_in_the_first_period():
     # Drawdowns from the initial 1.0: -10pt, -19pt.
     returns = pd.Series([-0.10, -0.10])
     assert ulcer_index(returns) == pytest.approx(np.sqrt((10.0 ** 2 + 19.0 ** 2) / 2.0), abs=1e-9)
+
+
+def test_mase_by_hand():
+    # Training steps are 1, 2, 1 -> naive MAE 4/3. Forecast errors 1 and 3 ->
+    # MAE 2. MASE = 2 / (4/3) = 1.5.
+    train = [10.0, 11.0, 13.0, 14.0]
+    actual = [15.0, 16.0]
+    forecast = [14.0, 19.0]
+    assert mean_absolute_scaled_error(actual, forecast, train) == pytest.approx(1.5)
+
+
+def test_mase_of_the_naive_forecast_on_a_steady_trend_is_its_horizon_average():
+    # Prices go up 1 a step. A flat forecast at the last price misses by 1,
+    # 2, 3, so MAE 2, scale 1, MASE 2.
+    train = np.arange(10, dtype=float)
+    assert mean_absolute_scaled_error([10, 11, 12], [9, 9, 9], train) == pytest.approx(2.0)
+
+
+def test_mase_is_nan_when_training_data_never_moves_or_nothing_to_score():
+    assert np.isnan(mean_absolute_scaled_error([1.0], [2.0], [5.0, 5.0, 5.0]))
+    assert np.isnan(mean_absolute_scaled_error([np.nan], [2.0], [1.0, 2.0]))
