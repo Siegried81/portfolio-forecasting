@@ -88,6 +88,15 @@ rate by 20 percentage points and the usual quantisation applies: 0%, 20%, 40%, 6
 are the only reachable values. Don't read much into a single window (see "Walk-forward
 validation" below for why).
 
+**Forecast MASE** (`forecast_mase` column of the walk-forward results, `forecast_mase_mean` in
+MLflow): the mean absolute scaled error of the price forecast itself, not of a portfolio. It's
+the forecast's mean absolute error over the test window divided by the mean absolute error of a
+one-step naive forecast on the training data (`mean(|y_t - y_(t-1)|)`, the non-seasonal
+definition in [fpp3, section 5.8](https://otexts.com/fpp3/accuracy.html)). Below 1, the forecast
+beat that yardstick; above 1, it didn't. A 20-step forecast is up against one-step naive errors,
+so values above 1 are normal here. Each asset is scaled by its own history, then the window's
+value is the mean over assets (`metrics.mean_absolute_scaled_error`, `backtesting._window_mase`).
+
 **Forecast fan chart** (Forecast & Compare tab, single asset at a time via a selector) — the
 point forecast that feeds the optimizer hides how much uncertainty compounds over the horizon;
 the shaded band (95% interval, `±1.96 × band`, widening with `√horizon`) makes that concrete:
@@ -329,7 +338,7 @@ to become selectable and benchmarkable.
 |---|---|---|
 | **Naive (random walk)** | Tomorrow's price = last price + average historical drift, with a `sqrt(horizon)`-widening confidence band. Always kept in the set as the baseline every other model has to beat — a fancier model that can't outperform this isn't adding value. | Classical statistics |
 | **ETS (Holt linear trend)** | Exponential Smoothing with a linear trend component. Few assumptions, robust default for noisy financial series. | Classical statistics |
-| **Theta method** | Splits the series into a long-term linear trend (OLS, extrapolated directly) and a short-term residual component (the trend's own residuals, forecast via Simple Exponential Smoothing), then adds the two back together. The strongest overall performer in the original M3 forecasting competition despite having no hyperparameters to tune — a useful, cheap middle point between ETS and ARIMA on the sophistication/speed spectrum. See `forecasting.theta_forecast`'s own docstring for why detrending before applying SES matters (skipping it would systematically under-forecast any real trend, since SES has no trend term of its own). | Classical statistics |
+| **Theta method** | Simple Exponential Smoothing of the prices plus a drift of HALF the slope of an OLS linear trend (Hyndman & Billah, 2003, showed that's what the original two-line method boils down to). No seasonal step. It won the M3 forecasting competition with nothing to tune, and it's cheap: one OLS fit and one SES fit. Its forecasts match statsmodels' `ThetaModel(deseasonalize=False)` to 1e-8 (`tests/test_forecasting.py`). Until November 2026 this app kept the full slope, so its Theta drift was twice too steep. | Classical statistics |
 | **ARIMA (auto order)** | ARIMA(p,1,q) with a small AIC grid search over p and q (d=1 fixed, since price levels are non-stationary by construction). Captures autocorrelation structure the simpler models miss, at the cost of being slower and more prone to overfitting on short series. | Classical statistics |
 | **ML regression (gradient boosting)** | Gradient-boosted trees (xgboost when available, scikit-learn otherwise) on lagged returns plus their rolling mean/std, forecasting one step at a time and feeding each prediction back in. Trains in milliseconds per asset. | **Machine learning** (tabular) |
 | **LSTM (recurrent neural net)** | A small, from-scratch-trained recurrent network, fit fresh per asset per call (no pretrained universal price model exists to load). The deep-learning member of this set. | **Machine learning** (deep learning) |
@@ -718,6 +727,9 @@ Things I'm aware of and chose not to fix within this project's scope, rather tha
   the whole process — reintroducing exactly the responsiveness problem this circuit breaker exists
   to fix. Yahoo being unreachable is a server-side fact, true for every session equally, not a
   per-user one; a per-session breaker would be a strictly worse trade-off, not a more correct one.
+- **Survivorship bias.** I pick the tickers today, so they're companies that survived. Firms that
+  went bust or were delisted over the backtest period never get in, which makes every backtest
+  here look better than it would have in real time.
 - **RAG persistence** — see above, opt-in via `REDIS_URL`. Still TF-IDF, not a
   real vector store; see "Short selling, transaction costs, and RAG" above for what would justify
   that next upgrade and why it isn't warranted yet.

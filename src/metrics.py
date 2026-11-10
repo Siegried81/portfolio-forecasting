@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+from numpy.typing import ArrayLike
 
 from src.config import DEFAULT_RISK_FREE_RATE, TRADING_DAYS_PER_YEAR
 
@@ -382,6 +383,29 @@ def omega_ratio(returns: pd.Series, threshold: float = 0.0) -> float:
     if losses == 0:
         return float("inf") if gains > 0 else float("nan")
     return float(gains / losses)
+
+
+def mean_absolute_scaled_error(actual: ArrayLike, forecast: ArrayLike, train: ArrayLike) -> float:
+    """MASE (Hyndman & Koehler, 2006; fpp3 section 5.8), non-seasonal.
+
+    The forecast's mean absolute error divided by the mean absolute error of
+    a one-step naive forecast on the TRAINING data (mean of |y_t - y_(t-1)|).
+    Below 1 means the forecast beat that naive yardstick, above 1 means it
+    didn't. `actual` and `forecast` are matched by position, not by date.
+    NaN when there's nothing to score or the training data never moves.
+    """
+    actual_arr = np.asarray(actual, dtype=float)
+    forecast_arr = np.asarray(forecast, dtype=float)
+    train_arr = np.asarray(train, dtype=float)
+    train_arr = train_arr[~np.isnan(train_arr)]
+    errors = np.abs(actual_arr - forecast_arr)
+    errors = errors[~np.isnan(errors)]
+    if errors.size == 0 or train_arr.size < 2:
+        return float("nan")
+    scale = float(np.mean(np.abs(np.diff(train_arr))))
+    if scale == 0:
+        return float("nan")
+    return float(np.mean(errors) / scale)
 
 
 def summarise_performance(

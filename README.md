@@ -116,7 +116,7 @@ pre-fills with the live 3-month T-bill yield. Why each choice was made:
 pytest tests/ -v
 ```
 
-518 tests across 22 files, all passing: the whole suite, run on Python 3.14 against the pinned
+530 tests across 22 files, all passing: the whole suite, run on Python 3.14 against the pinned
 `requirements.txt` (about a minute end to end; every network call is mocked, so the count does not
 depend on any API key being set). `mypy --strict` is also clean on every file in `src/`.
 
@@ -170,14 +170,27 @@ analytics of its own. Tests mock the price fetch and the LLM (`tests/test_api.py
 
 ```bash
 python scripts/track_forecasts.py --tickers AAPL MSFT SPY --years 3
-MLFLOW_ALLOW_FILE_STORE=true mlflow ui --backend-store-uri file:./mlruns
+mlflow ui --backend-store-uri sqlite:///mlflow.db  # run it from the repo root
 ```
 
 One MLflow run per model, with the walk-forward backtest's own metrics (mean annual return,
-volatility, Sharpe, Sortino, max drawdown of the forecast-based portfolio, plus the win rate) and
-the result CSVs as artifacts. Local file store under `mlruns/` (git-ignored); no server needed.
-MLflow 3 refuses to open a file store without `MLFLOW_ALLOW_FILE_STORE=true`; the script sets it
-for itself, `mlflow ui` in a fresh shell doesn't.
+volatility, Sharpe, Sortino, max drawdown of the forecast-based portfolio, plus the win rate and
+the MASE of the price forecast, `forecast_mase_mean`) and the result CSVs as artifacts. Each run also records `prices_sha256`, a fingerprint of the exact
+price data it used, so two runs can be checked to have seen the same market data. Runs go to a
+local SQLite database, `mlflow.db` at the repo root, with artifacts under `mlartifacts/` (both
+git-ignored); no server needed. MLflow 3 made SQLite its default backend and put the old
+`./mlruns` file store in maintenance mode, so the script no longer uses it. `MLFLOW_TRACKING_URI`
+overrides the default; `--tracking-dir DIR` overrides both and writes `DIR/mlflow.db`.
+
+If you have runs in an old `./mlruns` file store, copy them into the database with MLflow's own
+tool, then open it as above:
+
+```bash
+mlflow migrate-filestore --source . --target sqlite:///mlflow.db  # run it from the repo root
+```
+
+Keep `mlruns/` afterwards: the migration copies the run metadata, and the migrated runs still
+point at their artifacts inside it.
 
 ### Troubleshooting: `pandas` fails to build from source
 

@@ -51,7 +51,10 @@ from typing import cast, Any
 import numpy as np
 import pandas as pd
 from statsmodels.tsa.arima.model import ARIMA
-from statsmodels.tsa.holtwinters import ExponentialSmoothing, SimpleExpSmoothing
+from statsmodels.tsa.holtwinters import ExponentialSmoothing
+from statsmodels.tsa.statespace.exponential_smoothing import (
+    ExponentialSmoothing as StateSpaceExpSmoothing,
+)
 
 from src.config import MIN_HISTORY_POINTS_FOR_FORECAST, MIN_HISTORY_POINTS_FOR_LSTM
 
@@ -133,25 +136,27 @@ def ets_forecast(prices: pd.Series, horizon: int, *, frequency: str = "daily") -
 
 def theta_forecast(prices: pd.Series, horizon: int, *, frequency: str = "daily") -> ForecastResult:
     """
-    The Theta method (Assimakopoulos & Nikolopoulos, 2000): decompose the
-    series into a long-term linear trend and a short-term residual
-    component, forecast each with the tool suited to it, then recombine.
+    The Theta method (Assimakopoulos & Nikolopoulos, 2000), with no seasonal
+    step.
 
-    Implemented via the algebraically equivalent, more direct form of the
-    original two-"theta-line" decomposition: fit an OLS linear trend, take
-    SES (Simple Exponential Smoothing) of the DETRENDED residuals — which
-    have no linear trend left by construction, exactly what SES needs to
-    behave well — and add the two forecasts back together. Applying SES to
-    the raw series directly (skipping the detrend step) would systematically
-    under-forecast any real trend, since SES has no trend term of its own;
-    detrending first is what lets this method actually track a genuine trend
-    while still reacting to short-term deviations from it.
+    It's built in the form Hyndman & Billah (2003) proved equivalent: simple
+    exponential smoothing (SES) of the prices plus a drift equal to HALF the
+    slope of an OLS linear trend. Half, because the method averages two
+    "theta lines": the straight trend (theta=0) and a line with the local
+    swings doubled (theta=2), smoothed by SES. The theta=2 line alone adds no
+    drift, so the average keeps half the slope.
 
-    Deliberately NOT the generalised multi-theta-line variant (Hyndman &
-    Billah's later extension, or the automatic-weighting "optimised Theta"
-    of Fiorucci et al., 2016) — this equal-weight, two-component version has
-    no extra hyperparameters to tune and was still the strongest overall
-    performer in the original M3 competition despite that simplicity.
+    For step h (1-based), with b the OLS slope, alpha the SES weight and n
+    the number of prices:
+
+        forecast(h) = SES level + b/2 * (h - 1 + 1/alpha - (1 - alpha)**n / alpha)
+
+    It's the same formula and the same fitting steps as statsmodels'
+    ThetaModel(deseasonalize=False).fit() (OLS slope, then SES started at
+    the first price). tests/test_forecasting.py checks the two match.
+
+    It's not the multi-line variant or the "optimised Theta" of Fiorucci et
+    al. (2016): those add weights to tune, this one has none.
 
     Missing prices are dropped first, as in `ets_forecast`: NaNs would make
     the trend fit, and so the whole forecast, NaN.
@@ -160,39 +165,34 @@ def theta_forecast(prices: pd.Series, horizon: int, *, frequency: str = "daily")
     if len(prices) < MIN_HISTORY_POINTS_FOR_FORECAST:
         return naive_forecast(prices, horizon, frequency=frequency)
 
-    values = prices.to_numpy()
+    values = prices.to_numpy(dtype=float)
     n = len(values)
-    t = np.arange(n)
 
-    # Long-term component: OLS linear trend, extrapolated directly.
-    slope, intercept = np.polyfit(t, values, 1)
-    trend = intercept + slope * t
-    future_t = np.arange(n, n + horizon)
-    trend_forecast = intercept + slope * future_t
+    # OLS slope of price on time.
+    slope = float(np.polyfit(np.arange(n), values, 1)[0])
 
-    # Short-term component: SES on the detrended residuals (mean ~0, no
-    # linear trend left by construction — exactly the input SES handles
-    # well). A degenerate residual series (e.g. a perfectly linear input,
-    # all-zero residuals) can make SES fail to converge on some inputs —
-    # fall back to naive rather than crash the whole forecast.
-    residuals = values - trend
+    # SES on the prices, started at the first price and fit by maximum
+    # likelihood: the same class and settings ThetaModel uses, so alpha comes
+    # out the same. A flat or odd series can make the fit fail: fall back to
+    # naive rather than crash the whole forecast.
     try:
-        ses_fit = SimpleExpSmoothing(residuals, initialization_method="estimated").fit()
-        residual_forecast = ses_fit.forecast(horizon)
+        ses_fit = StateSpaceExpSmoothing(
+            values, initial_level=values[0], initialization_method="known"
+        ).fit(disp=False)
+        level = float(ses_fit.forecast(1)[0])
+        alpha = float(ses_fit.params[0])
     except Exception:
         return naive_forecast(prices, horizon, frequency=frequency)
 
-    point_forecast = trend_forecast + residual_forecast
-
-    # Confidence band: same sqrt(t)-widening convention as every other model
-    # here, scaled by the ONE-STEP-AHEAD forecast error std dev (the SES fit's
-    # own residuals), like naive/ETS. Not the std dev of `residuals`: those
-    # are deviations of the level from a straight line across the whole
-    # sample, which for a random-walk-like price series are many times larger
-    # than a one-step error, so multiplying them by sqrt(t) again would make
-    # the band roughly an order of magnitude too wide from the first step.
-    resid_std = float(np.std(ses_fit.resid, ddof=1))
     steps = np.arange(1, horizon + 1)
+    drift_steps = steps - 1.0
+    if alpha > 0:
+        drift_steps = drift_steps + 1 / alpha - (1 - alpha) ** n / alpha
+    point_forecast = level + (slope / 2) * drift_steps
+
+    # Confidence band: same sqrt(t) widening as every other model here,
+    # scaled by the std dev of the SES one-step errors, like naive and ETS.
+    resid_std = float(np.std(ses_fit.resid, ddof=1))
     band = resid_std * np.sqrt(steps)
 
     idx = _future_index(prices, horizon, frequency)

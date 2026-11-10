@@ -1,8 +1,8 @@
 """
 Tests for scripts/track_forecasts.py, the opt-in MLflow tracking bridge.
 
-No MLflow server: every test points track_model_runs at a file store under
-tmp_path, as the script defaults to mlruns/ at the repo root. No network
+No MLflow server: every test points track_model_runs at a SQLite store
+(mlflow.db) under tmp_path, as the script defaults to mlflow.db at the repo root. No network
 either: track_model_runs takes a price frame, and the one path that fetches
 (main via _fetch_prices) has its fetch mocked.
 """
@@ -27,7 +27,7 @@ def _synthetic_prices(n_periods: int, tickers: list[str], seed: int = 0) -> pd.D
 
 
 def _client(tmp_path) -> "mlflow.tracking.MlflowClient":
-    """MlflowClient pointed at the same file store track_model_runs used."""
+    """MlflowClient pointed at the same SQLite store track_model_runs used."""
     return mlflow.tracking.MlflowClient(tracking_uri=tf._tracking_uri(tmp_path))
 
 
@@ -67,6 +67,7 @@ def test_track_model_runs_logs_run_with_expected_params_and_metrics(tmp_path):
     assert 0.0 <= run.data.metrics["forecast_win_rate"] <= 1.0
     assert run.data.metrics["n_windows_evaluated"] == 3.0
     assert np.isfinite(run.data.metrics["forecast_sharpe_ratio_mean"])
+    assert run.data.metrics["forecast_mase_mean"] > 0
 
 
 def test_track_model_runs_logs_forecast_and_walk_forward_artifacts(tmp_path):
@@ -139,3 +140,72 @@ def test_main_entrypoint_uses_mocked_fetch_no_network(tmp_path, monkeypatch):
     runs = client.search_runs([experiment.experiment_id])
     assert len(runs) == 1
     assert runs[0].data.params["model_name"] == "Naive (random walk)"
+
+
+def test_track_model_runs_writes_to_sqlite_not_file_store(tmp_path):
+    """The default backend is SQLite (MLflow 3 put ./mlruns in maintenance
+    mode): runs land in <dir>/mlflow.db, artifacts in <dir>/mlartifacts, and
+    no legacy file store is created."""
+    prices = _synthetic_prices(220, ["AAA", "BBB"], seed=6)
+    run_ids = tf.track_model_runs(
+        prices, horizon=15, n_windows=3, models=["Naive (random walk)"],
+        tracking_uri=tmp_path, experiment_name="test-sqlite", min_train_periods=100,
+    )
+
+    assert tf._tracking_uri(tmp_path).startswith("sqlite:///")
+    assert (tmp_path / "mlflow.db").is_file()
+    assert not (tmp_path / "mlruns").exists()
+    assert list((tmp_path / "mlartifacts").rglob("walk_forward_results.csv"))
+    run = _client(tmp_path).get_run(run_ids[0])
+    assert run.info.artifact_uri.startswith((tmp_path / "mlartifacts").resolve().as_uri())
+
+
+def test_module_does_not_opt_into_legacy_file_store(monkeypatch):
+    """Importing the script must not set MLFLOW_ALLOW_FILE_STORE, the opt-out
+    that keeps MLflow 3's deprecated filesystem backend usable."""
+    import importlib
+    import os
+
+    monkeypatch.delenv("MLFLOW_ALLOW_FILE_STORE", raising=False)
+    importlib.reload(tf)
+    assert "MLFLOW_ALLOW_FILE_STORE" not in os.environ
+
+
+def test_mlflow_tracking_uri_env_var_overrides_default(tmp_path, monkeypatch):
+    uri = f"sqlite:///{(tmp_path / 'from_env.db').as_posix()}"
+    monkeypatch.setenv("MLFLOW_TRACKING_URI", uri)
+    assert tf._tracking_uri(None) == uri
+    assert tf._local_store_dir(None) is None
+    # An explicit directory still wins over the environment.
+    assert tf._tracking_uri(tmp_path).endswith("/mlflow.db")
+
+    prices = _synthetic_prices(220, ["AAA", "BBB"], seed=7)
+    run_ids = tf.track_model_runs(
+        prices, horizon=15, n_windows=3, models=["Naive (random walk)"],
+        experiment_name="test-env", min_train_periods=100,
+    )
+    client = mlflow.tracking.MlflowClient(tracking_uri=uri)
+    assert client.get_run(run_ids[0]).data.params["model_name"] == "Naive (random walk)"
+
+
+def test_prices_fingerprint_is_deterministic_and_data_sensitive():
+    prices = _synthetic_prices(50, ["AAA", "BBB"], seed=8)
+    fp = tf.prices_fingerprint(prices)
+    assert len(fp) == 64
+    assert tf.prices_fingerprint(prices.copy()) == fp
+
+    revised = prices.copy()
+    revised.iloc[10, 0] += 0.01
+    assert tf.prices_fingerprint(revised) != fp
+    assert tf.prices_fingerprint(prices.rename(columns={"AAA": "ZZZ"})) != fp
+    assert tf.prices_fingerprint(prices.iloc[1:]) != fp
+
+
+def test_track_model_runs_logs_prices_fingerprint(tmp_path):
+    prices = _synthetic_prices(220, ["AAA", "BBB"], seed=9)
+    run_ids = tf.track_model_runs(
+        prices, horizon=15, n_windows=3, models=["Naive (random walk)"],
+        tracking_uri=tmp_path, experiment_name="test-fp", min_train_periods=100,
+    )
+    run = _client(tmp_path).get_run(run_ids[0])
+    assert run.data.params["prices_sha256"] == tf.prices_fingerprint(prices)
