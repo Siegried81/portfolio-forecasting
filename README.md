@@ -197,7 +197,7 @@ point at their artifacts inside it.
 If `pip install -r requirements.txt` fails while compiling `pandas` (a wall of Cython/C++
 compiler output ending in a `meson`/`ninja` error), you're very likely on **Python 3.14 or
 newer** on a system where pip has no prebuilt wheel to fall back on for an older `pandas` pin.
-`requirements.txt` uses minimum-version pins (`pandas>=3.0.6`, not `==2.2.2`) specifically to
+`requirements.txt` uses minimum-version pins (`pandas>=3.1.1`, not `==2.2.2`) specifically to
 avoid this — pandas only shipped working Python 3.14 wheels starting at 3.0.5 (3.0.0-3.0.4 have
 a confirmed segfault regression on 3.14). If you still hit a build error:
 

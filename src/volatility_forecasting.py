@@ -84,7 +84,7 @@ def garch_forecast_variance(returns: pd.Series, horizon_periods: int) -> float |
 
     scaled = clean.values * 100
     try:
-        model = arch_model(scaled, vol="GARCH", p=1, q=1, mean="Zero", dist="normal")
+        model = arch_model(scaled, vol="garch", p=1, q=1, mean="zero", dist="normal")
         fit = model.fit(disp="off")
         if fit.convergence_flag != 0:
             return None  # optimizer did not converge — same "skip, don't trust it" as a raised exception

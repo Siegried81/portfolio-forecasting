@@ -216,9 +216,11 @@ portfolio-forecasting/
 ├── evals/
 │   └── chatbot_groundedness.py    # LLM-as-judge groundedness eval — not gated in CI, run manually
 ├── docs/
+│   ├── decisions.md             # dated record of changes to what a number means
 │   └── technical_deep_dive.md   # this file
 ├── images/                      # screenshots referenced in SCREENSHOTS.md
 ├── .github/
+│   ├── dependabot.yml            # one grouped update PR per ecosystem (pip, actions, docker) per week
 │   └── workflows/
 │       ├── ci.yml                # pytest + mypy --strict (blocking) + benchmark smoke test (non-blocking) on every push/PR
 │       └── publish.yml           # builds the Docker image, checks it answers, pushes to GHCR (+ Docker Hub if configured)
@@ -228,14 +230,19 @@ portfolio-forecasting/
 ├── .env                          # your local keys — NEVER committed
 ├── .gitignore
 ├── build-docker.sh / deploy.sh    # local build/run helpers (WSL, Linux/macOS)
-├── docker-compose.yml             # local Docker run — optional `redis` service via `--profile with-redis`
-├── Dockerfile                     # containerised run — also the base for Render's `runtime: docker`
+├── docker-compose.yml             # local Docker run, optional `redis` service via `--profile with-redis`
+├── docker-compose.debug.yml       # override that starts the same services under debugpy, for VS Code
+├── Dockerfile                     # containerised run, also the base for Render's `runtime: docker`
+├── DOCKERHUB.md                   # description shown on the Docker Hub page
 ├── .env.example                   # copy to .env and fill in your keys
+├── HARNESS.md                     # the checks built around the code, and the log of mistakes they caught
 ├── LICENSE
 ├── README.md
 ├── render.yaml                    # Render Blueprint (Infrastructure as Code)
 ├── requirements.txt
-└── SCREENSHOTS.md
+├── requirements-dev.txt           # development-only tools (debugpy), never installed in the image
+├── SCREENSHOTS.md
+└── SECURITY.md                    # security policy
 ```
 
 **Why this layout:** `src/metrics.py`, `src/forecasting.py`, and `src/optimization.py` have zero
