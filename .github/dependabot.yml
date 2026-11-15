@@ -24,7 +24,7 @@ updates:
 
   # python:3.14-slim in the Dockerfile: security fixes of the base image.
   # Minor bumps (3.14 -> 3.15) are ignored: they need wheels for every
-  # dependency first, and arch has none for 3.15 yet (see the Dockerfile).
+  # dependency first, and a 3.15 image has not been tested (see the Dockerfile).
   - package-ecosystem: docker
     directory: "/"
     schedule:

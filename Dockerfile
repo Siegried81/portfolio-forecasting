@@ -1,9 +1,10 @@
 # Portfolio Forecasting - containerised Streamlit app.
 # Build:  docker build -t portfolio-forecasting .
 # Run:    docker run -p 8501:8501 --env-file .env portfolio-forecasting
-# Stay on 3.14: arch 8.0.0 ships wheels up to cp314 only, so on 3.15 pip falls
-# back to the source archive and the slim image has no C compiler to build it.
-# Move up once arch publishes a cp315 wheel.
+# Stay on 3.14 until a 3.15 image is built and tested. arch was the blocker
+# (8.0.0 had wheels up to cp314 only, and the slim image has no C compiler to
+# build from source); arch 9.0.0 ships cp315 wheels, the other dependencies
+# have not been checked.
 FROM python:3.14-slim
 
 # Prevents Python from writing .pyc files and buffers stdout (cleaner container logs)
@@ -17,7 +18,7 @@ WORKDIR /app
 # Install deps first (separate layer) so code changes don't invalidate the pip cache
 COPY requirements.txt .
 # CPU-only torch first: on Linux the default PyPI wheel bundles several GB of CUDA
-# libraries that Render (no GPU) never uses. requirements.txt's torch>=2.0 is then
+# libraries that Render (no GPU) never uses. requirements.txt's torch>=2.15.0 is then
 # already satisfied, so pip does not pull the CUDA build on top.
 # xgboost likewise: on Linux it requires nvidia-nccl (305 MB) for multi-GPU
 # training, so the image installs the CPU-only `xgboost-cpu` distribution (same
