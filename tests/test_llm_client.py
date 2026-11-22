@@ -208,12 +208,16 @@ def test_truncate_to_token_budget_degrades_to_char_truncation_when_encoding_unav
 
 def _install_fake_groq(monkeypatch, behaviour_by_key):
     """Install a fake `groq` module whose client behaves per API key:
-    "rate_limit" raises RateLimitError, "error" raises RuntimeError, any other
-    string is returned as the completion text. Records constructor kwargs."""
+    "rate_limit" raises RateLimitError, "bad_key" raises AuthenticationError,
+    "error" raises RuntimeError, any other string is returned as the completion
+    text. Records constructor kwargs."""
     import sys
     import types
 
     class RateLimitError(Exception):
+        pass
+
+    class AuthenticationError(Exception):
         pass
 
     calls = []
@@ -226,6 +230,8 @@ def _install_fake_groq(monkeypatch, behaviour_by_key):
             outcome = behaviour_by_key[self._key]
             if outcome == "rate_limit":
                 raise RateLimitError("429")
+            if outcome == "bad_key":
+                raise AuthenticationError("401")
             if outcome == "error":
                 raise RuntimeError("401 invalid model")
             message = types.SimpleNamespace(content=outcome)
@@ -239,6 +245,7 @@ def _install_fake_groq(monkeypatch, behaviour_by_key):
     fake_module = types.ModuleType("groq")
     fake_module.Groq = Groq
     fake_module.RateLimitError = RateLimitError
+    fake_module.AuthenticationError = AuthenticationError
     monkeypatch.setitem(sys.modules, "groq", fake_module)
     return calls
 
@@ -246,6 +253,15 @@ def _install_fake_groq(monkeypatch, behaviour_by_key):
 def test_call_groq_rotates_to_next_key_on_rate_limit(monkeypatch):
     _patch_settings(monkeypatch, groq_api_keys=["k1", "k2"])
     calls = _install_fake_groq(monkeypatch, {"k1": "rate_limit", "k2": "answer from k2"})
+    result = llm_client._call_groq([{"role": "user", "content": "hi"}], temperature=0.3, max_tokens=100)
+    assert result == "answer from k2"
+    assert [key for key, _ in calls] == ["k1", "k2"]
+
+
+def test_call_groq_rotates_past_a_rejected_key(monkeypatch):
+    """One revoked or mistyped key (401) must not take the other keys down with it."""
+    _patch_settings(monkeypatch, groq_api_keys=["k1", "k2"])
+    calls = _install_fake_groq(monkeypatch, {"k1": "bad_key", "k2": "answer from k2"})
     result = llm_client._call_groq([{"role": "user", "content": "hi"}], temperature=0.3, max_tokens=100)
     assert result == "answer from k2"
     assert [key for key, _ in calls] == ["k1", "k2"]
@@ -262,7 +278,7 @@ def test_call_groq_does_not_rotate_on_a_non_rate_limit_error(monkeypatch):
 def test_call_groq_raises_llm_unavailable_when_every_key_is_rate_limited(monkeypatch):
     _patch_settings(monkeypatch, groq_api_keys=["k1", "k2"])
     _install_fake_groq(monkeypatch, {"k1": "rate_limit", "k2": "rate_limit"})
-    with pytest.raises(LLMUnavailableError, match="All 2 Groq keys are rate-limited"):
+    with pytest.raises(LLMUnavailableError, match="All 2 Groq keys were rate-limited or rejected"):
         llm_client._call_groq([{"role": "user", "content": "hi"}], temperature=0.3, max_tokens=100)
 
 

@@ -1,9 +1,7 @@
 """
-Unit tests for src/news_data.py's fetch_sec_filings — previously had zero test
-coverage. Priority: the URL construction logic, since a real bug was found
-there (accession number extracted from the response but never used, so every
-filing linked to the generic company browse page instead of the specific
-8-K found). Fully mocked — no real network call, no SEC EDGAR rate limits hit.
+Unit tests for src/news_data.py's fetch_sec_filings. Priority: the URL
+construction logic (the accession number must be used, or every filing links to
+the generic company browse page instead of the specific 8-K found). Fully mocked — no real network call, no SEC EDGAR rate limits hit.
 
 Also covers CIK filtering: a bare company-name text search
 ("Apple") can also match unrelated companies sharing the word (confirmed

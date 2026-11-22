@@ -280,22 +280,18 @@ def _get_gradient_boosted_regressor(model_type: str, n_estimators: int) -> Any:
     # to have, so the float accumulation order — and therefore the forecast —
     # can differ between machines and container sizes. Single-threaded is not a
     # real cost here: these fits take milliseconds on one asset's return series.
-    if model_type == "auto":
+    if model_type in ("auto", "xgboost"):
         try:
             from xgboost import XGBRegressor
+        except ImportError:
+            if model_type == "xgboost":
+                raise  # explicitly requested but missing
+            model_type = "gradient_boosting"
+        else:
             return XGBRegressor(
                 n_estimators=n_estimators, max_depth=3, learning_rate=0.05, verbosity=0,
                 random_state=0, n_jobs=1,
             )
-        except ImportError:
-            model_type = "gradient_boosting"
-
-    if model_type == "xgboost":
-        from xgboost import XGBRegressor  # raises ImportError if explicitly requested but missing
-        return XGBRegressor(
-            n_estimators=n_estimators, max_depth=3, learning_rate=0.05, verbosity=0,
-            random_state=0, n_jobs=1,
-        )
     if model_type == "random_forest":
         from sklearn.ensemble import RandomForestRegressor
         return RandomForestRegressor(n_estimators=n_estimators, max_depth=5, random_state=0)

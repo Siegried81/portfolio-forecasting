@@ -76,6 +76,8 @@ from src.market_data import (
     fetch_adjusted_close,
     fetch_fundamentals,
     fetch_vix_snapshot,
+    fundamentals_fill_notice,
+    price_source_notice,
     resample_prices,
 )
 from src.metrics import (
@@ -149,9 +151,9 @@ _background_data_uri = "data:image/svg+xml," + _url_quote(
 st.markdown(
     f"""
     <style>
-    /* Page + sidebar background — BOTH containers, not just the main area:
-       the sidebar has its own opaque background in Streamlit by default and
-       was silently hiding the pattern entirely before this fix. */
+    /* Page + sidebar background: BOTH containers, not just the main area,
+       because the sidebar has its own opaque background in Streamlit by
+       default and would hide the pattern entirely. */
     .stApp, [data-testid="stAppViewContainer"], [data-testid="stSidebar"] {{
         background-color: #E9EDF5;
         background-image: url("{_background_data_uri}");
@@ -163,10 +165,9 @@ st.markdown(
     [data-testid="stHeader"] {{
         background-color: rgba(0, 0, 0, 0);
     }}
-    /* Input fields — text inputs, text areas, chat input, number inputs, and
-       select/multiselect boxes now get an explicit white fill + visible
-       border, so they read as fields instead of blending into the new
-       background color above. */
+    /* Input fields: text inputs, text areas, chat input, number inputs and
+       select/multiselect boxes get an explicit white fill + visible border,
+       so they read as fields instead of blending into the background above. */
     .stTextInput input, .stTextArea textarea, .stChatInput textarea, .stNumberInput input {{
         background-color: #FFFFFF !important;
         border: 1px solid #C7CEDA !important;
@@ -185,7 +186,7 @@ st.markdown(
 def _format_ratio(x: float) -> str:
     """
     Format a ratio/metric value for display, distinguishing three genuinely
-    different cases that a single blanket "—" used to collapse into one:
+    different cases that a single blanket "—" would collapse into one:
     NaN (undefined — e.g. zero volatility), +/-inf (Omega ratio with zero
     losing periods in the sample), and an ordinary finite number. Showing
     infinity as a bare "—" reads as a minus sign or a missing value, not as
@@ -601,11 +602,9 @@ def _chart_palette(n: int) -> list[str]:
 def render_overview_tab(
     prices: pd.DataFrame, tickers: list[str], periods_per_year: int, risk_free_rate: float = DEFAULT_RISK_FREE_RATE,
 ) -> None:
-    source = prices.attrs.get("source", "yfinance")
-    if "twelvedata" in source:
-        st.caption(f"⚠️ Data source: **{source}** — Yahoo Finance was unreachable, using the Twelve Data fallback.")
-    elif "yahoo direct" in source:
-        st.caption(f"ℹ️ Data source: **{source}** — the yfinance library failed, but a direct Yahoo API call succeeded.")
+    source_notice = price_source_notice(prices.attrs.get("source", "yfinance"))
+    if source_notice:
+        st.caption(source_notice)
 
     st.subheader("Price history (adjusted close)")
     palette = _chart_palette(len(tickers))
@@ -624,8 +623,8 @@ def render_overview_tab(
         # color to a name in the legend is slower than reading it right off
         # the chart where the line actually ends. Font color matches the line
         # explicitly (rather than relying on Plotly's own auto-cycle, which
-        # this loop no longer uses now that color is assigned by hand above)
-        # so the label is unambiguous even when several lines end close together.
+        # this loop does not use: color is assigned by hand above) so the label
+        # is unambiguous even when several lines end close together.
         fig.add_annotation(
             x=rebased.index[-1], y=rebased.values[-1], text=ticker, showarrow=False,
             xanchor="left", xshift=6, font=dict(size=11, color=color),
@@ -754,20 +753,19 @@ def render_overview_tab(
     st.divider()
     st.subheader("Fundamentals")
     st.caption(
-        "Via Finnhub first; Twelve Data and then "
-        "yfinance each fill in whatever individual fields are still missing on top of that, and Twelve Data is used as the primary source outright if "
-        "Finnhub isn't configured or returns nothing — some fields may still be unavailable "
-        "depending on the exchange/plan or a temporary Yahoo rate limit. Fetched on demand to conserve API quota."
+        "Via Finnhub first; Twelve Data and then yfinance fill in whatever individual fields "
+        "are still missing on top of that. Twelve Data is the primary source if Finnhub isn't "
+        "configured or returns nothing, and yfinance (no key needed) is the primary source if "
+        "neither is. Some fields may still be unavailable depending on the exchange/plan or a "
+        "temporary Yahoo rate limit. Fetched on demand to conserve API quota."
     )
-    if not (LLM_SETTINGS.finnhub_api_key or LLM_SETTINGS.twelvedata_api_key):
-        st.info("Set `FINNHUB_API_KEY` (preferred) or `TWELVEDATA_API_KEY` in `.env` to enable this section.")
-    elif st.button("Fetch fundamentals for selected assets"):
-        # The 8 req/min pacing below only protects Twelve Data's free tier — it's
+    if st.button("Fetch fundamentals for selected assets"):
+        # The 8 req/min pacing below only protects Twelve Data's free tier. It is
         # irrelevant (and needlessly slow) when Finnhub is configured, since
         # fetch_fundamentals() tries Finnhub FIRST and Finnhub's own free tier
-        # is 60 req/min. Only warn about / apply the slow pacing when Twelve
-        # Data is the sole configured source (i.e. actually on the hot path).
-        twelvedata_is_primary = not LLM_SETTINGS.finnhub_api_key
+        # is 60 req/min, or when Twelve Data has no key at all. Only apply it
+        # when Twelve Data is the first source actually called.
+        twelvedata_is_primary = bool(LLM_SETTINGS.twelvedata_api_key) and not LLM_SETTINGS.finnhub_api_key
         if twelvedata_is_primary and len(tickers) > 8:
             st.caption(
                 f"⏳ {len(tickers)} tickers on an 8 req/min free-tier limit — this will take "
@@ -775,6 +773,7 @@ def render_overview_tab(
             )
         progress = st.progress(0.0, text="Fetching fundamentals...")
         rows = []
+        fill_notices = []
         plan_restricted = False
         for i, ticker in enumerate(tickers):
             if i > 0 and twelvedata_is_primary:
@@ -788,6 +787,9 @@ def render_overview_tab(
                     plan_restricted = True
                     f = None
             progress.progress((i + 1) / len(tickers), text=f"Fetching fundamentals... ({i + 1}/{len(tickers)})")
+            fill_notice = fundamentals_fill_notice(f)
+            if fill_notice:
+                fill_notices.append(f"{ticker}: {fill_notice}")
             rows.append({
                 "Ticker": ticker,
                 "Name": (f or {}).get("name") or "—",
@@ -804,6 +806,8 @@ def render_overview_tab(
             })
         progress.empty()
         st.dataframe(pd.DataFrame(rows).set_index("Ticker"), width='stretch')
+        if fill_notices:
+            st.caption("Filled in from a fallback provider: " + " | ".join(fill_notices))
         if plan_restricted:
             st.warning(
                 "Your Twelve Data plan only includes `/statistics` for their public demo symbol "
@@ -814,10 +818,10 @@ def render_overview_tab(
             )
         elif all(r["Market cap"] == "—" and r["P/E (trailing)"] == "—" for r in rows):
             st.warning(
-                "No fundamentals fields came back for any ticker — this likely means your "
-                "Twelve Data plan doesn't include the `/statistics` endpoint's fields. "
-                "Check your plan at twelvedata.com/pricing."
-                )
+                "No fundamentals fields came back for any ticker. Finnhub and Twelve Data may be "
+                "unconfigured or limited by their plan, and yfinance may be rate-limited by Yahoo "
+                "right now: try again in a few minutes."
+            )
 
 
 def render_frontier_tab(
@@ -1301,6 +1305,12 @@ def render_walk_forward_section(prices: pd.DataFrame, tickers: list[str], config
             forecast_cov_method=config["forecast_cov_method"],
             frequency=config["frequency"],
         )
+    if results.empty:
+        st.warning(
+            f"No walk-forward window could be scored: no selected asset has {WALK_FORWARD_MIN_TRAIN_PERIODS}+ "
+            "prices before the first window. Widen the date range or drop the recently listed assets."
+        )
+        return
 
     # Split into sub-tabs — distribution, summary, period-over-period, and the
     # raw table each answer a different question, and stacking all four

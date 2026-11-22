@@ -1,6 +1,4 @@
 """Unit tests for src/rag.py (TF-IDF retrieval) and its Redis persistence."""
-import pytest
-
 import src.rag as rag
 from src.rag import Chunk, build_chunks, format_retrieved_chunks, load_chunks, retrieve, save_chunks
 

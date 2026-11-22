@@ -1,63 +1,39 @@
 # Portfolio Forecasting & Optimization
 
-I built this as a technical case study for BeCode's AI & Data Science bootcamp (GenAI Developer
-track): an interactive Streamlit app that builds and compares three portfolios —
-**historical-based**, **forecast-based**, and **realized-optimal (hindsight)** — using
-mean-variance optimization, plus an AI analyst layer I added on top (LLM commentary, news digest,
-grounded Q&A chatbot).
+A Streamlit app I built as a case study for BeCode's AI & Data Science bootcamp (GenAI Developer
+track). It builds and compares three portfolios, **historical-based**, **forecast-based** and
+**realized-optimal (hindsight)**, with mean-variance optimization. An AI analyst layer sits on top
+(LLM commentary, news digest, grounded Q&A chatbot).
+
+## What it does
+
+You pick stocks or ETFs, a date range and a frequency. The app computes returns, volatility,
+correlation and the max-Sharpe efficient-frontier portfolio. It then holds out the last N periods and
+forecasts each asset's price over that window with one of six models (naive random walk, ETS, Theta,
+ARIMA, gradient-boosted ML regression, LSTM). It builds an optimal portfolio from the forecasted
+returns and compares its realized out-of-sample performance with the historical-based portfolio and
+with the hindsight-optimal one, built from the actual returns of the same window. A walk-forward
+section repeats the comparison over several expanding windows.
+
+The AI Analyst tab (Groq, then OpenRouter, SambaNova and local Ollama as fallbacks) comments on the
+results and answers questions grounded in the computed numbers, with a news digest per ticker from
+NewsAPI, Finnhub, SEC EDGAR, GDELT, Google News and TED (EU public procurement). Screenshots:
+[SCREENSHOTS.md](SCREENSHOTS.md).
+
+**Results.** There are no fixed result figures: every number is computed live from the universe, dates
+and frequency you choose, and the repo ships no market data. Short-horizon price forecasting has weak
+predictive power, so the forecast-based portfolio is a methodology demo, not a trading signal. A
+forecast win rate near 50% in the walk-forward section is the expected outcome. Formulas, design
+choices and limits: [docs/technical_deep_dive.md](docs/technical_deep_dive.md).
 
 ## Live demo
 
-Both deployment targets below are **unverified — treat them as likely down**, not as working
-demos. The last time either was checked, Streamlit Community Cloud was redirecting to a login
-wall (so the app read as restricted to invited viewers rather than public) and Render was
-returning 503. Render runs on the free tier, which spins the service down after inactivity, so a
-503 there may just be a cold start — give it 30-60s and reload before concluding anything.
+Both targets are unverified, treat them as likely down. Last time they were checked, Streamlit
+Community Cloud redirected to a login wall and Render returned 503 (its free tier sleeps after
+inactivity, so give it 30 to 60 seconds). Running it yourself is the reliable way:
 
 - Streamlit Community Cloud: `https://portfolio-forecasting-siegried81.streamlit.app/`
 - Render: `https://portfolio-forecasting.onrender.com`
-
-To run it yourself with no deployment involved, see [Setup](#setup) below — that path is tested and
-is the reliable way to see the app.
-
-## What it does, in one paragraph
-
-You pick a universe of stocks/ETFs, a date range, and a frequency. I compute historical returns,
-volatility, correlation, and the max-Sharpe efficient-frontier portfolio. Then I hold out the last
-N periods, forecast each asset's price over that window (six models: naive random walk, ETS, Theta,
-ARIMA, gradient-boosted ML regression, and LSTM — see technical_deep_dive.md for why Kats was
-not used), build an optimal portfolio from the *forecasted* returns,
-and compare its **actual, realized** out-of-sample performance against (a) the historical-based
-portfolio and (b) the hindsight-optimal portfolio built from the *actual* returns of that same
-window. An AI Analyst tab (Groq, falling back through OpenRouter and SambaNova, then
-local Ollama) narrates the results and answers questions about them, grounded in the computed
-numbers — plus a news digest per ticker cross-referencing NewsAPI, Finnhub, SEC EDGAR,
-GDELT, Google News, and TED (EU public procurement)
-filings.
-
-## Contents
-
-- [Screenshots](#screenshots)
-- [Full technical write-up](#full-technical-write-up) → [technical_deep_dive.md](docs/technical_deep_dive.md)
-- [Setup](#setup)
-- [Deployment](#deployment)
-- [License](LICENSE) (MIT)
-
-## Screenshots
-
-See **[SCREENSHOTS.md](SCREENSHOTS.md)** for the full gallery — split out of this README so the
-main doc stays readable rather than being dominated by images.
-
-
-
-
-## Full technical write-up
-
-This README stays business-first on purpose — results, screenshots, how to run it. Everything
-else (KPI formulas, full repo structure, every design decision vs. the original brief, the
-walk-forward methodology in detail, known limitations, and the full roadmap) lives in
-**[docs/technical_deep_dive.md](docs/technical_deep_dive.md)**, so neither doc has to duplicate
-the other.
 
 ## Setup
 
@@ -65,231 +41,128 @@ the other.
 git clone https://github.com/Siegried81/portfolio-forecasting && cd portfolio-forecasting
 python3 -m venv .venv && source .venv/bin/activate     # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-cp .env.example .env                                     # then fill in your keys, see below
+cp .env.example .env                                     # then fill in your keys
 streamlit run app.py
 ```
 
-### API keys (all free tiers)
+The app runs with no key at all; you only lose the AI Analyst content and the live risk-free rate.
+`python scripts/check_env.py` lists which keys are set, what each unlocks and where to get the missing
+ones. Up to 5 Groq keys can be set (`GROQ_API_KEY`, `GROQ_API_KEY_2` .. `_5`). The next one is tried
+only on a 429 or a 401.
 
-| Key | Where to get it | Required? |
+| Key | Free tier | Without it |
 |---|---|---|
-| `GROQ_API_KEY` (+ optional `_2` .. `_5`) | [console.groq.com](https://console.groq.com) | Optional — AI Analyst tab falls back through the hosted providers below, then local Ollama, without it |
-| `NEWSAPI_KEY` | [newsapi.org](https://newsapi.org/register) (100 req/day free) | Optional — one of six news/filing sources; digest still works with any subset configured |
-| `FINNHUB_API_KEY` | [finnhub.io](https://finnhub.io/register) (free, 60 req/**min**) | Optional — dedicated financial-news API, cross-referenced alongside NewsAPI and SEC EDGAR; also the primary source for per-ticker fundamentals |
-| `FRED_API_KEY` | [fred.stlouisfed.org](https://fred.stlouisfed.org/docs/api/api_key.html) | Optional — risk-free rate slider and macro panel fall back to a fixed 4% default / n/a without it |
-| `TWELVEDATA_API_KEY` | [twelvedata.com](https://twelvedata.com) (free, 800 req/day) | Optional — fallback market data source if Yahoo Finance is unreachable, and fallback fundamentals source (mainly covers `AAPL` on the free tier — see the caveat in [docs/technical_deep_dive.md](docs/technical_deep_dive.md)) |
-| `TIINGO_API_KEY` | [tiingo.com](https://www.tiingo.com/account/api/token) (free, 500 req/hour) | Optional — third market-data tier, tried FIRST among the three fallbacks (most generous free tier of the three) |
-| `ALPHA_VANTAGE_API_KEY` | [alphavantage.co/support/#api-key](https://www.alphavantage.co/support/#api-key) (free, 25 req/day) | Optional — fourth, last-resort market-data tier, only tried if Yahoo, Tiingo AND Twelve Data all fail |
-| `SEMANTIC_SCHOLAR_API_KEY` | [semanticscholar.org/product/api](https://www.semanticscholar.org/product/api) | Optional — genuinely optional even without one: the search endpoint works unauthenticated at a lower shared rate limit; a key just raises it |
-| `HUGGINGFACE_API_KEY` | [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens) (free) | Optional — but required for the FinBERT sentiment tier specifically; without it that tier is skipped and the cascade falls to Finnhub then VADER |
-| `OPENROUTER_API_KEY` | [openrouter.ai](https://openrouter.ai) (free-tier models available) | Optional — 1st hosted LLM fallback tier, tried if every Groq key fails |
-| `SAMBANOVA_API_KEY` | [cloud.sambanova.ai](https://cloud.sambanova.ai) (free tier available) | Optional — 2nd hosted LLM fallback tier, tried after OpenRouter; independent account/infrastructure |
-| Ollama (local fallback) | `ollama serve` + `ollama pull llama3.1` — [ollama.com](https://ollama.com) | Optional — final tier, only reachable when self-hosting locally; silently unreachable in a deployed container |
+| `GROQ_API_KEY` | [console.groq.com](https://console.groq.com) | the AI Analyst falls back to OpenRouter, SambaNova, then local Ollama |
+| `OPENROUTER_API_KEY`, `SAMBANOVA_API_KEY` | [openrouter.ai](https://openrouter.ai), [cloud.sambanova.ai](https://cloud.sambanova.ai) | those hosted fallback tiers are skipped |
+| `NEWSAPI_KEY` | [newsapi.org](https://newsapi.org/register), 100 req/day | one of six news sources is missing |
+| `FINNHUB_API_KEY` | [finnhub.io](https://finnhub.io/register), 60 req/min | no Finnhub news and sentiment tier; fundamentals come from Twelve Data or yfinance |
+| `FRED_API_KEY` | [fred.stlouisfed.org](https://fred.stlouisfed.org/docs/api/api_key.html) | risk-free rate defaults to 4%, macro panel shows n/a |
+| `TIINGO_API_KEY`, `TWELVEDATA_API_KEY`, `ALPHA_VANTAGE_API_KEY` | [tiingo.com](https://www.tiingo.com/account/api/token) (500 req/hour), [twelvedata.com](https://twelvedata.com) (800 req/day), [alphavantage.co](https://www.alphavantage.co/support/#api-key) (25 req/day) | market-data fallbacks after Yahoo, tried in that order |
+| `HUGGINGFACE_API_KEY` | [huggingface.co](https://huggingface.co/settings/tokens) | no FinBERT sentiment, the cascade starts at Finnhub then VADER |
+| `SEMANTIC_SCHOLAR_API_KEY` | [semanticscholar.org](https://www.semanticscholar.org/product/api) | optional: the search works unauthenticated at a lower rate limit |
+| `REDIS_URL` | any Redis | cache and news corpus stay per process |
+| Ollama | `ollama serve` + `ollama pull llama3.1` | last LLM tier, only reachable when self-hosting |
 
-**News digest cross-referencing.** The AI Analyst's news digest pulls from six genuinely
-different source types rather than one: NewsAPI (general media), Finnhub (dedicated financial
-news, far more generous free-tier quota), SEC EDGAR full-text search (free, no key —
-primary-source 8-K "material event" filings, not journalism about the company), GDELT (free, no
-key — a worldwide news index reaching well beyond the US/English-language press), Google News
-RSS (free, no key — a fast cross-check search feed), and TED (free, no key — the EU's official
-public-procurement notice database; NOT "TED Talks", see `docs/technical_deep_dive.md`). Each headline
-in the UI's "Sources" expander is tagged with which provider it came from; the LLM prompt
-explicitly treats SEC filings and TED notices as more authoritative primary sources than media
-coverage of the same event, and notes when multiple sources corroborate the same story. Works
-with any subset of the two key-requiring sources (NewsAPI, Finnhub) configured — the other four
-need no key at all — missing a key just means fewer sources, not a broken feature.
+Market data (`yfinance`), SEC EDGAR, GDELT, Google News, TED and arXiv need no key.
 
-Market data (`yfinance`) needs no key. The app runs fully without *any* key — you just lose the
-AI Analyst tab's content and the live risk-free rate, not the core optimization/forecasting/
-comparison functionality.
-
-**Groq key rotation.** Up to 5 Groq keys can be set (`GROQ_API_KEY`, `GROQ_API_KEY_2` ..
-`GROQ_API_KEY_5`); the next one is tried only on a 429 rate limit. After Groq, the hosted
-fallbacks (OpenRouter → SambaNova, whichever have a key) keep the AI Analyst working in
-production, where local Ollama is unreachable. With `FRED_API_KEY` set, the risk-free rate slider
-pre-fills with the live 3-month T-bill yield. Why each choice was made:
-[docs/technical_deep_dive.md → Data & LLM provider fallbacks](docs/technical_deep_dive.md#data--llm-provider-fallbacks).
-
-### Run the tests
+## Tests
 
 ```bash
 pytest tests/ -v
 ```
 
-530 tests across 22 files, all passing: the whole suite, run on Python 3.14 against the pinned
-`requirements.txt` (about a minute end to end; every network call is mocked, so the count does not
-depend on any API key being set). `mypy --strict` is also clean on every file in `src/`.
+541 tests across 23 files, all passing on Python 3.14 against the pinned `requirements.txt`, in about a
+minute. Every network call is mocked, so the count does not depend on any key. `mypy --strict src/` is
+clean.
 
-`torch` is needed only for the LSTM model and only ever runs on CPU here, but the default PyPI
-wheel pulls in several GB of CUDA packages. On a test/CI machine, install the CPU-only build first
-and the `requirements.txt` entry is then already satisfied:
+`torch` is only needed for the LSTM and only runs on CPU here, but its default PyPI wheel pulls several
+GB of CUDA packages. On a test machine or CI, install the CPU build first and the `requirements.txt`
+entry is then satisfied:
 
 ```bash
 pip install --index-url https://download.pytorch.org/whl/cpu torch
 pip install -r requirements.txt
 ```
 
-### Check your environment
+CI (`.github/workflows/ci.yml`, Python 3.14 like the Dockerfile) runs `pytest` and `mypy --strict`
+(both blocking) on every push and PR, plus the `--quick` benchmark below as a non-blocking smoke test.
+
+## Other entry points
+
+**Capacity benchmark.** Wall-clock time and peak Python-heap memory of `run_walk_forward`, on synthetic
+prices (no network), across universe sizes, window counts, forecast models and the GARCH toggle. For
+capacity planning, not a pass/fail check.
 
 ```bash
-python scripts/check_env.py
+python scripts/benchmark_walk_forward.py --quick      # Naive/ETS only
+python scripts/benchmark_walk_forward.py              # full grid, incl. a 40-asset PCA universe
+python scripts/benchmark_walk_forward.py --csv bench.csv
 ```
 
-Every API key this app uses is optional (see the table above) — the app runs with zero keys
-configured, just with fewer features. This script is a two-second report of which keys are set
-in your `.env`, what each one unlocks, and a signup link for anything missing — nothing here
-blocks or gates anything, it's purely informational.
+**JSON API.** `python -m uvicorn api.main:app --port 8004` exposes `/forecast`, `/optimize`, `/ask`
+and `/api/health`. Each calls the same `src/` function as the app, over the last 5 years of daily
+prices, and adds no analytics of its own (`tests/test_api.py` mocks the fetch and the LLM).
 
-### Capacity benchmarking
-
-```bash
-python scripts/benchmark_walk_forward.py --quick          # fast subset — Naive/ETS only, no ARIMA
-python scripts/benchmark_walk_forward.py                  # full grid — every model, with and without GARCH covariance, + a 40-asset PCA-covariance universe
-python scripts/benchmark_walk_forward.py --csv bench.csv  # also write results to CSV, to track over time
-```
-
-Wall-clock time and peak (Python-heap) memory for `backtesting.run_walk_forward` — the single
-most compute-heavy path in the app — across a grid of universe sizes, window counts, forecast
-models, and the GARCH forecast-covariance toggle. Synthetic price data (same generator
-`tests/test_backtesting.py` uses), so no network call and no market-data dependency. Not part of
-`pytest`/CI gating on purpose: this is for capacity planning before a real deployment (how long
-does one run take, how does that scale with universe size), not a pass/fail correctness check —
-CI only runs it in `--quick` mode as a non-blocking smoke test that the script itself still works.
-
-### JSON API
-
-```bash
-python -m uvicorn api.main:app --port 8004
-```
-
-`api/main.py` exposes `/forecast`, `/optimize`, `/ask` and `/api/health`. Each one calls the same
-`src/` function the Streamlit app calls, over the last 5 years of daily prices. It adds no
-analytics of its own. Tests mock the price fetch and the LLM (`tests/test_api.py`).
-
-### Track the models with MLflow
+**MLflow tracking.**
 
 ```bash
 python scripts/track_forecasts.py --tickers AAPL MSFT SPY --years 3
-mlflow ui --backend-store-uri sqlite:///mlflow.db  # run it from the repo root
+mlflow ui --backend-store-uri sqlite:///mlflow.db      # from the repo root
 ```
 
-One MLflow run per model, with the walk-forward backtest's own metrics (mean annual return,
-volatility, Sharpe, Sortino, max drawdown of the forecast-based portfolio, plus the win rate and
-the MASE of the price forecast, `forecast_mase_mean`) and the result CSVs as artifacts. Each run also records `prices_sha256`, a fingerprint of the exact
-price data it used, so two runs can be checked to have seen the same market data. Runs go to a
-local SQLite database, `mlflow.db` at the repo root, with artifacts under `mlartifacts/` (both
-git-ignored); no server needed. MLflow 3 made SQLite its default backend and put the old
-`./mlruns` file store in maintenance mode, so the script no longer uses it. `MLFLOW_TRACKING_URI`
-overrides the default; `--tracking-dir DIR` overrides both and writes `DIR/mlflow.db`.
+One run per model, with the walk-forward means of the forecast-based portfolio (annual return,
+volatility, Sharpe, Sortino, max drawdown), the win rate, `forecast_mase_mean`, the result CSVs and
+`prices_sha256` (a fingerprint of the exact prices used). Runs go to `mlflow.db` and `mlartifacts/` at
+the repo root (git-ignored). `MLFLOW_TRACKING_URI` overrides the location and `--tracking-dir DIR`
+overrides both. To move runs from an old `./mlruns` file store (keep `mlruns/`, the migrated runs point
+at its artifacts): `mlflow migrate-filestore --source . --target sqlite:///mlflow.db`.
 
-If you have runs in an old `./mlruns` file store, copy them into the database with MLflow's own
-tool, then open it as above:
+## Troubleshooting
 
-```bash
-mlflow migrate-filestore --source . --target sqlite:///mlflow.db  # run it from the repo root
-```
+**`pandas` fails to build from source.** You are probably on a Python newer than the wheels you pin.
+`requirements.txt` uses minimum versions for this reason (pandas has working 3.14 wheels from 3.0.5;
+3.0.0 to 3.0.4 segfault on 3.14). Check `python --version`, run `pip install --upgrade pandas numpy
+scipy statsmodels streamlit`, and if that still fails use Python 3.12 (`pyenv` or `uv python install
+3.12`) and recreate the venv.
 
-Keep `mlruns/` afterwards: the migration copies the run metadata, and the migrated runs still
-point at their artifacts inside it.
+**Yahoo returns no data or `crumb = 'Edge: Too Many Requests'`.** Yahoo's anti-bot handshake is a known
+`yfinance` problem. The app falls back in order to the direct Yahoo API, Tiingo, Twelve Data and Alpha
+Vantage. If Yahoo answers only some tickers (typically a rate limit on `TSLA`), only the missing ones
+are fetched again from the next sources. The Overview tab captions the source whenever prices did not
+come straight from `yfinance` (e.g. `yfinance + tiingo for TSLA`). A wall of `Failed to get ticker`
+lines in the terminal does not mean the app is broken: yfinance logs every attempt the fallback
+chain then handles. Only the red "Could not load market data" banner means every source failed. If so,
+clear the cookie cache with `rm -rf ~/.cache/py-yfinance` and retry in a few minutes.
 
-### Troubleshooting: `pandas` fails to build from source
+**WSL: `OperationalError('unable to open database file')`.** yfinance's SQLite cache can land on a
+Windows-mounted drive where SQLite cannot lock files. `market_data.py` redirects it to the system temp
+directory at import. If that does not apply, `rm -rf ~/.cache/py-yfinance`. The harmless
+`gio: http://localhost:8501: Operation not supported` line goes away with `streamlit run app.py
+--server.headless true`.
 
-If `pip install -r requirements.txt` fails while compiling `pandas` (a wall of Cython/C++
-compiler output ending in a `meson`/`ninja` error), you're very likely on **Python 3.14 or
-newer** on a system where pip has no prebuilt wheel to fall back on for an older `pandas` pin.
-`requirements.txt` uses minimum-version pins (`pandas>=3.1.1`, not `==2.2.2`) specifically to
-avoid this — pandas only shipped working Python 3.14 wheels starting at 3.0.5 (3.0.0-3.0.4 have
-a confirmed segfault regression on 3.14). If you still hit a build error:
-
-```bash
-python --version              # confirm which Python the venv is actually using
-pip install --upgrade pandas numpy scipy statsmodels streamlit   # force the latest wheels
-```
-
-If that still fails, your Python is newer than every dependency has wheels for yet — the
-reliable fix is a slightly older interpreter (3.12 is the safest bet) via `pyenv`,
-`uv python install 3.12`, or your distro's package manager, then recreating the venv with it.
-
-### Troubleshooting: Yahoo Finance returns no data / `crumb = 'Edge: Too Many Requests'`
-
-Yahoo Finance's anti-bot cookie/crumb handshake (which `yfinance` depends on) is a widely
-reported issue across the `yfinance` community, not specific to this app or your network. The app
-falls back in order: `yfinance` → direct Yahoo API → Tiingo → Twelve Data → Alpha Vantage. If
-Yahoo returns some tickers but leaves one empty (typical of a rate limit, e.g. `TSLA`), only that
-ticker is fetched again from the next sources; an error appears only when none of them has it.
-Details: [docs/technical_deep_dive.md → Data & LLM provider fallbacks](docs/technical_deep_dive.md#data--llm-provider-fallbacks).
-
-The Overview tab shows a caption indicating which source actually served the data (e.g.
-`yfinance + tiingo for TSLA`). Set `TIINGO_API_KEY`, `TWELVEDATA_API_KEY` and/or
-`ALPHA_VANTAGE_API_KEY` in `.env` to enable the non-Yahoo fallbacks. Without them, the app shows
-Yahoo's error once both Yahoo-based steps fail.
-
-**A wall of `Failed to get ticker '...' reason: Expecting value...` in the terminal does NOT mean
-the app is broken.** yfinance logs every failed attempt loudly, including the ones this app's own
-fallback chain expects and handles — if you see ARIMA/statsmodels fit warnings (or any forecasting
-output) appear AFTER that wall of text, prices loaded successfully via a later step in the chain
-(most likely Twelve Data); check the Overview tab's data-source caption to confirm which one. Only
-a red `st.error("Could not load market data: ...")` banner in the browser itself means every
-fallback failed and nothing loaded.
-
-If you still see no data after every fallback:
-```bash
-rm -rf ~/.cache/py-yfinance   # clears a possibly-stale cached cookie
-```
-then retry, or wait a few minutes — Yahoo's blocks are usually transient, not permanent.
-
-**WSL-specific: `OperationalError('unable to open database file')`.** yfinance keeps its own local
-SQLite cache (cookies + per-ticker timezone lookups); on WSL, if that cache path resolves onto a
-Windows-mounted drive (`/mnt/c`, `/mnt/d`, DrvFs/9p) rather than the WSL distro's native
-filesystem, SQLite can't lock the file there and every ticker touching the cache fails this way
-(e.g. `'^VIX'`, while the main tickers still succeed via the Twelve Data fallback, a
-different code path that never touches this cache). `market_data.py`
-redirects yfinance's cache to the system temp directory at import time. If you're on a setup
-where that redirect doesn't apply, `rm -rf ~/.cache/py-yfinance` (or
-wherever `yf.get_yf_data_dir()` reports) is the manual equivalent.
-
-**`gio: http://localhost:8501: Operation not supported` on startup is harmless noise, not an app
-error.** Streamlit tries to auto-open your default browser via WSL's `gio` URI-opener, which isn't
-configured to reach a Windows browser from inside WSL by default — the server itself starts fine
-regardless; just open the Local URL manually. Run `streamlit run app.py --server.headless true` to
-stop Streamlit from attempting this at all.
-
-### Docker (local)
+## Docker and deployment
 
 ```bash
 docker build -t portfolio-forecasting .
 docker run -p 8501:8501 --env-file .env portfolio-forecasting
 ```
 
-## Deployment
+The published image (GitHub Container Registry, and Docker Hub when its secrets are set) is built and
+smoke-tested by `.github/workflows/publish.yml`; its Docker Hub page text is `DOCKERHUB.md`. Secrets
+are never baked in: pass them with `--env-file`.
 
-Neither target is currently verified as reachable — see [Live demo](#live-demo). The steps below are
-how each one is provisioned, not a claim that it is up right now.
+**Streamlit Community Cloud** (primary): push to GitHub, then [share.streamlit.io](https://share.streamlit.io),
+New app, `app.py` as the entrypoint, and add the keys under Settings, Secrets (TOML, same names as
+`.env.example`). A new app is restricted to invited viewers by default: set Settings, Sharing to
+public and check it in a logged-out window.
 
-**Streamlit Community Cloud** (primary): push to GitHub → [share.streamlit.io](https://share.streamlit.io)
-→ New app → point at this repo, `app.py` as the entrypoint → add `GROQ_API_KEY` / `NEWSAPI_KEY`
-under app Settings → Secrets (TOML format, same keys as `.env.example`). A new app defaults to
-restricted viewers, which is what produces a login wall for anyone else: set Settings → Sharing to
-public, then confirm it in a logged-out private window, which is what a reader's browser looks like.
-The app's subdomain is whatever Streamlit Cloud assigns, so copy it from the dashboard rather than
-assuming it matches the URL above.
+**Render** (backup): New, Blueprint, point at this repo. `render.yaml` builds the `Dockerfile`; set
+the keys in the Render dashboard (they are `sync: false`, never committed).
 
-**Render** (backup): push to GitHub → Render dashboard → New → Blueprint → point at this repo.
-`render.yaml` provisions the service from the `Dockerfile` automatically; set `GROQ_API_KEY` and
-`NEWSAPI_KEY` in the Render dashboard's environment variables (they're marked `sync: false` in
-`render.yaml` so they're never committed).
-
-**Before pushing:** run `git diff --cached` to check nothing sensitive slipped into a config
-file, and keep a local backup of the repo before pulling/pushing on a shared/team remote.
-
-**CI & branch protection.** `.github/workflows/ci.yml` runs `pytest` and `mypy --strict` (both
-blocking) on every push/PR, plus a `--quick` capacity-benchmark smoke test (non-blocking). This
-is a workflow file, not a repo setting — it can't stop a direct push to `main` from bypassing it
-on its own. Branch protection is a GitHub repository setting, not something committable in this
-repo, so it has to be applied once, by hand, by whoever administers the GitHub repo:
+**Branch protection** is a repo setting, not a file, so a direct push to `main` can bypass CI until it
+is applied once by an admin:
 
 ```bash
-# via the gh CLI, once, from repo admin:
 gh api repos/{owner}/{repo}/branches/main/protection -X PUT \
   -f required_status_checks[strict]=true \
   -f 'required_status_checks[contexts][]=test' \
@@ -298,6 +171,9 @@ gh api repos/{owner}/{repo}/branches/main/protection -X PUT \
   -f restrictions=null
 ```
 
-or via the UI: repo → **Settings → Branches → Add branch protection rule** → branch name pattern
-`main` → check "Require status checks to pass before merging" → select the `test` check from
-`ci.yml` above.
+## More
+
+- [docs/technical_deep_dive.md](docs/technical_deep_dive.md): KPI formulas, architecture, design choices, limitations, roadmap
+- [docs/decisions.md](docs/decisions.md): changes to what a number means
+- [docs/mistakes_log.md](docs/mistakes_log.md): past mistakes and the rule each one left
+- [SECURITY.md](SECURITY.md), [LICENSE](LICENSE) (MIT)

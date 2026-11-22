@@ -17,7 +17,13 @@ from src.metrics import (
     mean_absolute_scaled_error,
     summarise_performance,
 )
-from src.config import COV_METHOD_GARCH, DEFAULT_COV_METHOD, DEFAULT_PCA_FACTORS, MIN_HISTORY_POINTS_FOR_FORECAST
+from src.config import (
+    COV_METHOD_GARCH,
+    DEFAULT_COV_METHOD,
+    DEFAULT_FORECAST_COV_METHOD,
+    DEFAULT_PCA_FACTORS,
+    MIN_HISTORY_POINTS_FOR_FORECAST,
+)
 from src.optimization import forecast_mu, historical_mu_cov, optimize_max_sharpe, resolve_weight_bounds
 
 PORTFOLIO_TYPE_ORDER: list[str] = ["Historical-based", "Forecast-based", "Realized-optimal"]
@@ -55,7 +61,7 @@ def run_walk_forward(
     transaction_cost_bps: float = 0.0,
     cov_method: str = DEFAULT_COV_METHOD,
     n_factors: int = DEFAULT_PCA_FACTORS,
-    forecast_cov_method: str | None = None,
+    forecast_cov_method: str | None = DEFAULT_FORECAST_COV_METHOD,
     frequency: str = "daily",
 ) -> pd.DataFrame:
     """

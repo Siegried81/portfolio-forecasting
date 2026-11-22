@@ -11,11 +11,7 @@ import requests
 import streamlit as st
 
 import src.factor_data as factor_data
-from src.factor_data import (
-    THREE_FACTOR_COLUMNS,
-    compute_factor_exposures,
-    fetch_fama_french_factors,
-)
+from src.factor_data import compute_factor_exposures, fetch_fama_french_factors
 
 
 @pytest.fixture(autouse=True)

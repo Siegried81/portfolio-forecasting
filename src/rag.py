@@ -19,8 +19,7 @@ pulled in transitively by PyPortfolioOpt's `cvxpy` stack), and sufficient here.
 Persistence: opt-in via the SAME Redis instance
 `src/cache.py`'s `cached()` decorator already uses — with no `REDIS_URL` set
 (every local/free-tier deployment today), `save_chunks`/`load_chunks` are
-silent no-ops and behaviour is EXACTLY what it was before this existed: a
-corpus rebuilt fresh every session. When `REDIS_URL` IS set, a fetched corpus
+silent no-ops: the corpus is rebuilt fresh every session. When `REDIS_URL` IS set, a fetched corpus
 survives the session ending, a container restart, or a second user asking
 about the same ticker set. Still TF-IDF, not a real vector store: if this
 corpus grew into hundreds of PERMANENTLY accumulated documents (rather than
@@ -113,7 +112,7 @@ def load_chunks(tickers: list[str]) -> list[Chunk]:
     configured and has one. Returns [] (never raises) if Redis isn't
     configured, has nothing under this key (first fetch ever, or the TTL
     expired), or the read/parse itself fails — callers should treat [] exactly
-    like "no news fetched yet," the same state as before this feature existed.
+    like "no news fetched yet."
     """
     client = get_redis_client()
     if client is None:

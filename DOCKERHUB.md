@@ -15,7 +15,7 @@
 
 ## What is it?
 
-Streamlit app to backtest, optimise and forecast an equity portfolio: walk-forward backtests, mean-variance and risk-parity optimisation, ARIMA/LSTM/GARCH forecasts, factor exposures, macro context and an LLM analyst that answers from the computed numbers.
+Streamlit app to backtest, optimise and forecast an equity portfolio: walk-forward backtests, mean-variance optimisation, naive/ETS/Theta/ARIMA/ML/LSTM forecasts, GARCH covariance, factor exposures, macro context and an LLM analyst that answers from the computed numbers.
 
 Images from this repository:
 
@@ -33,24 +33,14 @@ docker run -d -p 8501:8501 --env-file .env siegried/portfolio-forecasting
 
 ## Environment variables
 
-None are required to start the UI. Secrets are **never** baked into the image: pass
-them at run time with `-e NAME=value` or `--env-file .env` (see `.env.example` in the repo).
+None are required to start the UI. Secrets are never baked into the image: pass them at run time
+with `-e NAME=value` or `--env-file .env` (see `.env.example` in the repo).
 
 | Variable | Purpose |
 |---|---|
-| `GROQ_API_KEY` | AI analyst (Groq); OpenRouter, Cerebras, SambaNova and Ollama are fallbacks |
+| `GROQ_API_KEY` | AI analyst (Groq); OpenRouter, SambaNova and Ollama are fallbacks |
 | `NEWSAPI_KEY / FINNHUB_API_KEY` | news digest and fundamentals |
-| `TWELVEDATA_API_KEY / ALPHA_VANTAGE_API_KEY` | market data fallbacks when Yahoo fails |
+| `TIINGO_API_KEY / TWELVEDATA_API_KEY / ALPHA_VANTAGE_API_KEY` | market data fallbacks when Yahoo fails |
 | `FRED_API_KEY` | live Treasury yields |
 | `REDIS_URL` | optional shared cache, e.g. `redis://redis:6379/0` |
 | `PORT` | listening port, set automatically on Render |
-
-## Volumes
-
-- none: the image is self-contained
-
-## License
-
-See the LICENSE file in the source repository, if any. As with every image, it is
-your responsibility to check that your use complies with the licenses of the
-software it contains.

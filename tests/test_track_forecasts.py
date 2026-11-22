@@ -209,3 +209,16 @@ def test_track_model_runs_logs_prices_fingerprint(tmp_path):
     )
     run = _client(tmp_path).get_run(run_ids[0])
     assert run.data.params["prices_sha256"] == tf.prices_fingerprint(prices)
+
+
+def test_track_model_runs_says_so_when_no_window_can_be_scored(tmp_path):
+    # Every ticker is listed too late to reach min_train_periods before the
+    # first window: the walk-forward result is empty and must not surface as
+    # a bare KeyError from the summary step.
+    prices = _synthetic_prices(220, ["AAA"], seed=3)
+    prices.iloc[:150] = np.nan
+    with pytest.raises(ValueError, match="No walk-forward window could be scored"):
+        tf.track_model_runs(
+            prices, horizon=15, n_windows=3, models=["Naive (random walk)"],
+            tracking_uri=tmp_path, experiment_name="test-empty", min_train_periods=100,
+        )

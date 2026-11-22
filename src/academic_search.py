@@ -253,9 +253,8 @@ def search_academic_papers(query: str, limit: int = 3) -> list[dict[str, Any]]:
     already found there is never re-added from arXiv.
 
     This is the function `ai_features.answer_portfolio_question` and the
-    Chatbot tab's manual literature-search box both call — neither needed
-    to change when arXiv was added here, since the combined result has the
-    exact same shape and signature as before.
+    Chatbot tab's manual literature-search box both call. Both sources
+    return the same result shape, so callers never see which one answered.
     """
     semantic_scholar_results = _search_semantic_scholar(query, limit)
     remaining = limit - len(semantic_scholar_results)

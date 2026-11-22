@@ -74,12 +74,6 @@ def _configure_yfinance_cache() -> None:
 _configure_yfinance_cache()  # run once at import time, before any yf.download() call below
 
 
-# Strip credential query params (`apikey=`, Finnhub's `token=`, FRED's `api_key=`)
-# from any string before it is logged or raised: `requests`' HTTPError embeds the
-# full URL, and st.error() would show a raw exception on screen. One shared
-# implementation in http_utils; this name is kept for the existing call sites.
-_redact_api_key = redact_secrets
-
 TWELVEDATA_URL = "https://api.twelvedata.com/time_series"
 TWELVEDATA_MAX_ATTEMPTS = 3
 TWELVEDATA_BACKOFF_SECONDS = 20.0  # doubles each retry: 20s, 40s — 429 free-tier limits reset per-minute
@@ -95,9 +89,9 @@ TIINGO_BACKOFF_SECONDS = 5.0
 
 ALPHA_VANTAGE_URL = "https://www.alphavantage.co/query"
 # The free tier's published limit is 25 requests/DAY (not just a per-minute
-# rate) — the stingiest constraint of this app's four market-data sources by
-# a wide margin, which is exactly why this sits as the last-resort, fifth
-# tier rather than an earlier one. One ticker per call (no batch endpoint,
+# rate) — the stingiest constraint of this app's market-data sources by a
+# wide margin, which is exactly why this sits as the last-resort tier rather
+# than an earlier one. One ticker per call (no batch endpoint,
 # unlike Twelve Data), so even a handful of tickers can burn a meaningful
 # fraction of a day's quota in one fetch.
 ALPHA_VANTAGE_SECONDS_BETWEEN_CALLS = 13.0  # keeps this app's own calls under
@@ -184,9 +178,9 @@ def _yahoo_timestamps_to_dates(timestamps: list[int], meta: dict[str, Any]) -> p
 def _download_yahoo_direct(tickers: list[str], start: dt.date, end: dt.date) -> pd.DataFrame:
     """
     Direct call to Yahoo Finance's own REST API (`v8/finance/chart`) — bypassing
-    the `yfinance` library entirely. Added per the brief's literal wording ("the
-    Yahoo Finance API through the yfinance package"): this is what "the Yahoo
-    Finance API" actually is underneath the library.
+    the `yfinance` library entirely. The brief asks for "the Yahoo Finance API
+    through the yfinance package"; this is what that API actually is underneath
+    the library.
 
     This endpoint sits behind the SAME cookie/crumb anti-bot layer that already
     blocks the `yfinance` library above (see `_download_yfinance`'s docstring) —
@@ -280,7 +274,7 @@ def _download_twelvedata(tickers: list[str], start: dt.date, end: dt.date) -> pd
             logger.warning("Twelve Data 429, retrying in %.0fs (attempt %d/%d)", TWELVEDATA_BACKOFF_SECONDS * attempt, attempt, TWELVEDATA_MAX_ATTEMPTS)
             time.sleep(TWELVEDATA_BACKOFF_SECONDS * attempt)
     except (requests.RequestException, ValueError) as exc:
-        raise MarketDataError(f"Twelve Data request failed: {_redact_api_key(str(exc))}") from exc
+        raise MarketDataError(f"Twelve Data request failed: {redact_secrets(str(exc))}") from exc
 
     if payload is None:  # unreachable in practice (the loop above always raises or
         # assigns), but makes the invariant explicit for both mypy and future edits
@@ -336,15 +330,15 @@ def _download_twelvedata(tickers: list[str], start: dt.date, end: dt.date) -> pd
 
 def _download_alpha_vantage(tickers: list[str], start: dt.date, end: dt.date) -> pd.DataFrame:
     """
-    Fourth-tier fallback: Alpha Vantage's `TIME_SERIES_DAILY_ADJUSTED` endpoint. ONE
+    Last-resort fallback: Alpha Vantage's `TIME_SERIES_DAILY_ADJUSTED` endpoint. ONE
     call per ticker (Alpha Vantage has no batched multi-symbol endpoint,
     unlike Twelve Data above) — paced by `ALPHA_VANTAGE_SECONDS_BETWEEN_CALLS`
     between calls to respect the vendor's per-minute throttle within the free
     tier's real constraint: 25 requests per DAY, the tightest budget of this
-    app's four market-data sources. That trade-off is exactly why this sits
-    as the LAST resort (after yfinance, direct Yahoo, AND Twelve Data), not an
-    earlier one: a rarely-needed, slow-but-working fourth option is worth
-    more here than a faster one that adds nothing when the first three
+    app's market-data sources. That trade-off is exactly why this sits
+    as the LAST resort (after yfinance, direct Yahoo, Tiingo AND Twelve Data), not
+    an earlier one: a rarely-needed, slow-but-working last option is worth
+    more here than a faster one that adds nothing when the earlier ones
     already cover the common case.
 
     `outputsize="full"` (the entire available history, not just the last
@@ -369,7 +363,7 @@ def _download_alpha_vantage(tickers: list[str], start: dt.date, end: dt.date) ->
             response.raise_for_status()
             payload = response.json()
         except (requests.RequestException, ValueError) as exc:
-            logger.warning("Alpha Vantage request failed for %s: %s", ticker, _redact_api_key(str(exc)))
+            logger.warning("Alpha Vantage request failed for %s: %s", ticker, redact_secrets(str(exc)))
             continue
 
         # Alpha Vantage reports errors/rate-limit notices as plain-text
@@ -401,9 +395,6 @@ def _download_alpha_vantage(tickers: list[str], start: dt.date, end: dt.date) ->
     return pd.concat(columns, axis=1)
 
 
-# Stays on @st.cache_data (not @cached from src/cache.py): returns a
-# DataFrame, which cached()'s JSON-based Redis path deliberately doesn't
-# support — see that module's docstring.
 def _download_tiingo(tickers: list[str], start: dt.date, end: dt.date) -> pd.DataFrame:
     """
     Third-tier fallback: Tiingo's `/tiingo/daily/{ticker}/prices` endpoint.
@@ -431,7 +422,7 @@ def _download_tiingo(tickers: list[str], start: dt.date, end: dt.date) -> pd.Dat
             response.raise_for_status()
             rows = response.json()
         except (requests.RequestException, ValueError) as exc:
-            logger.warning("Tiingo request failed for %s: %s", ticker, _redact_api_key(str(exc)))
+            logger.warning("Tiingo request failed for %s: %s", ticker, redact_secrets(str(exc)))
             continue
         if not rows:
             continue
@@ -511,6 +502,9 @@ def _fill_missing_tickers(
     return prices, source
 
 
+# Stays on @st.cache_data (not @cached from src/cache.py): returns a
+# DataFrame, which cached()'s JSON-based Redis path deliberately doesn't
+# support — see that module's docstring.
 @st.cache_data(show_spinner=False, ttl=3600)
 def fetch_adjusted_close(
     tickers: list[str],
@@ -528,12 +522,12 @@ def fetch_adjusted_close(
     Yahoo-based attempts are exhausted; (4) Twelve Data, tried if Tiingo fails;
     (5) Alpha Vantage, tried only if Twelve Data ALSO fails — its free tier's real
     ceiling (25 requests per DAY, one call per ticker, no batch endpoint)
-    makes it the most constrained of the four, which is exactly why it sits last.
+    makes it the most constrained of them, which is exactly why it sits last.
 
     Circuit breaker: Streamlit reruns the WHOLE script on every widget
     interaction — adding one ticker, moving a slider — which means a naive
-    implementation re-attempts the full Yahoo retry sequence (up to 6 failed
-    calls with backoff sleeps) on every single interaction while Yahoo is down,
+    implementation re-attempts the full Yahoo retry sequence (3 yfinance
+    attempts with backoff sleeps, then one direct call per ticker) on every single interaction while Yahoo is down,
     even though the previous attempt (seconds ago) already proved it's down.
     Once both Yahoo paths fail, `_yahoo_down_until` records "don't bother
     retrying Yahoo before this time" — subsequent calls within that window skip
@@ -632,6 +626,24 @@ def resample_prices(prices: pd.DataFrame, frequency: str) -> pd.DataFrame:
     return resampled
 
 
+def price_source_notice(source: str) -> str | None:
+    """
+    Caption telling the user which source served the prices, or None when the
+    yfinance library answered for every ticker (nothing to flag). `source` is
+    the label `fetch_adjusted_close` stores in `prices.attrs["source"]`. Every
+    other label gets a caption, so prices from Tiingo or Alpha Vantage, or a
+    single ticker filled in by a fallback, are never presented as plain Yahoo
+    data.
+    """
+    if source == "yfinance":
+        return None
+    if "(yahoo" in source:
+        return f"⚠️ Data source: **{source}**. Yahoo Finance was unreachable, so a fallback provider served these prices."
+    if source.startswith("yahoo direct"):
+        return f"ℹ️ Data source: **{source}**. The yfinance library failed, but a direct Yahoo API call succeeded."
+    return f"ℹ️ Data source: **{source}**. Yahoo returned no prices for some tickers, so the sources after it filled them in."
+
+
 # Stays on @st.cache_data — returns a Series, same reason as fetch_adjusted_close above.
 @st.cache_data(show_spinner=False, ttl=1800)
 def fetch_vix_snapshot(lookback_days: int = 90) -> pd.Series | None:
@@ -683,7 +695,7 @@ def _fetch_twelvedata_fundamentals(ticker: str) -> dict[str, Any] | None:
                 timeout=10,
             )
         except requests.RequestException as exc:
-            logger.warning("Twelve Data fundamentals request failed for %s: %s", ticker, _redact_api_key(str(exc)))
+            logger.warning("Twelve Data fundamentals request failed for %s: %s", ticker, redact_secrets(str(exc)))
             return None
 
         payload = None
@@ -692,7 +704,7 @@ def _fetch_twelvedata_fundamentals(ticker: str) -> dict[str, Any] | None:
                 response.raise_for_status()
                 payload = response.json()
             except (requests.RequestException, ValueError) as exc:
-                logger.warning("Twelve Data fundamentals request failed for %s: %s", ticker, _redact_api_key(str(exc)))
+                logger.warning("Twelve Data fundamentals request failed for %s: %s", ticker, redact_secrets(str(exc)))
                 return None
             if not _is_twelvedata_rate_limited(payload):
                 break
@@ -702,7 +714,7 @@ def _fetch_twelvedata_fundamentals(ticker: str) -> dict[str, Any] | None:
             return None
         time.sleep(TWELVEDATA_BACKOFF_SECONDS * attempt)
     else:
-        return None
+        return None  # unreachable (the last attempt returns or breaks); it narrows `payload` for mypy
 
     if payload.get("status") == "error" or "code" in payload and "message" in payload:
         message = payload.get("message", str(payload))
@@ -764,7 +776,7 @@ def _fetch_finnhub_fundamentals(ticker: str) -> dict[str, Any] | None:
         profile = profile_resp.json()
         metric = (metric_resp.json() or {}).get("metric", {}) or {}
     except (requests.RequestException, ValueError) as exc:
-        logger.warning("Finnhub fundamentals request failed for %s: %s", ticker, _redact_api_key(str(exc)))
+        logger.warning("Finnhub fundamentals request failed for %s: %s", ticker, redact_secrets(str(exc)))
         return None
 
     if not profile and not metric:
@@ -819,6 +831,47 @@ _FUNDAMENTALS_FILLABLE_FIELDS = [
 _twelvedata_fill_plan_restricted = False
 
 
+def _apply_fill(result: dict[str, Any], fallback: dict[str, Any], missing_fields: list[str], label: str) -> dict[str, Any]:
+    """
+    Copy into `result` the `missing_fields` that `fallback` has, never touching
+    a value already there. `result["field_sources"]` maps each filled field to
+    the provider that supplied it (the first call records the starting
+    provider for the fields `result` already has), and `result["source"]`
+    becomes e.g. "Finnhub + yfinance" only when something was actually filled.
+    """
+    field_sources = result.setdefault(
+        "field_sources", {f: result["source"] for f in _FUNDAMENTALS_FILLABLE_FIELDS if result.get(f) is not None},
+    )
+    filled_any = False
+    for field in missing_fields:
+        if fallback.get(field) is not None:
+            result[field] = fallback[field]
+            field_sources[field] = label
+            filled_any = True
+    if filled_any:
+        result["source"] = f"{result['source']} + {label}"
+    return result
+
+
+def fundamentals_fill_notice(result: dict[str, Any] | None) -> str | None:
+    """
+    Caption naming the fields that did not come from the primary provider
+    (e.g. "forward_pe, beta from yfinance"), or None when one provider supplied
+    everything. Keeps the Source column honest about which number came from where.
+    """
+    if not result:
+        return None
+    field_sources = result.get("field_sources") or {}
+    primary = str(result.get("source", "")).split(" + ")[0]
+    by_label: dict[str, list[str]] = {}
+    for field, label in field_sources.items():
+        if label != primary:
+            by_label.setdefault(label, []).append(field)
+    if not by_label:
+        return None
+    return "; ".join(f"{', '.join(fields)} from {label}" for label, fields in by_label.items())
+
+
 def _fill_missing_fundamentals_from_twelvedata(ticker: str, result: dict[str, Any]) -> dict[str, Any]:
     """
     Fill individual None fields in a Finnhub fundamentals `result` from
@@ -839,7 +892,7 @@ def _fill_missing_fundamentals_from_twelvedata(ticker: str, result: dict[str, An
 
     Never raises TwelveDataPlanRestricted: unlike the primary-source path in
     `fetch_fundamentals`, a restricted plan here just means the gap stays a
-    gap exactly like before this function existed — it must never discard
+    gap — it must never discard
     the Finnhub fields `result` already has.
 
     Mutates `result["source"]` to record blended provenance (e.g. "Finnhub
@@ -862,15 +915,7 @@ def _fill_missing_fundamentals_from_twelvedata(ticker: str, result: dict[str, An
     if fallback is None:
         return result
 
-    filled_any = False
-    for field in missing_fields:
-        if fallback.get(field) is not None:
-            result[field] = fallback[field]
-            filled_any = True
-
-    if filled_any:
-        result["source"] = f"{result['source']} + Twelve Data"
-    return result
+    return _apply_fill(result, fallback, missing_fields, "Twelve Data")
 
 
 def _fetch_yfinance_fundamentals(ticker: str) -> dict[str, Any] | None:
@@ -961,52 +1006,53 @@ def _fill_missing_fundamentals_from_yfinance(ticker: str, result: dict[str, Any]
     if fallback is None:
         return result
 
-    filled_any = False
-    for field in missing_fields:
-        if fallback.get(field) is not None:
-            result[field] = fallback[field]
-            filled_any = True
-
-    if filled_any:
-        result["source"] = f"{result['source']} + yfinance"
-    return result
+    return _apply_fill(result, fallback, missing_fields, "yfinance")
 
 
 @cached(ttl_seconds=6 * 3600)
 def fetch_fundamentals(ticker: str) -> dict[str, Any] | None:
     """
     Per-ticker fundamentals (P/E, market cap, dividend yield, beta, 52w range).
-    Tries Finnhub first (free tier covers arbitrary tickers). Twelve Data and
-    yfinance are then BOTH used, in order, as per-field gap-fillers — not
-    just once:
-      1. Finnhub first (see `_fetch_finnhub_fundamentals`).
-      2. If Finnhub isn't configured or returns nothing at all, Twelve Data
-         is used as the PRIMARY source outright (see
-         `_fetch_twelvedata_fundamentals`) — Twelve Data's free tier is
-         restricted to their demo symbol (AAPL), so this mostly only helps
-         AAPL.
-      3. If Finnhub DID return a result but left individual fields None
-         (`forward_pe` especially, often absent on Finnhub's free tier),
-         Twelve Data is tried again as a per-FIELD gap-filler (see
-         `_fill_missing_fundamentals_from_twelvedata`) — same demo-symbol
-         caveat, so this again mostly only helps AAPL.
-      4. Whatever is STILL missing after that is tried one more time via
-         yfinance's unofficial `Ticker.info` (see
-         `_fill_missing_fundamentals_from_yfinance`) — genuinely free, no
-         key, and covers `forward_pe` for most large-cap tickers where
-         neither Finnhub's nor Twelve Data's free tier will.
+    Finnhub first (free tier covers arbitrary tickers), then per-field gap
+    filling, and the result's `field_sources` says which provider supplied
+    each field:
+      1. Finnhub (see `_fetch_finnhub_fundamentals`).
+      2. If Finnhub isn't configured or returns nothing at all, Twelve Data is
+         the primary source (see `_fetch_twelvedata_fundamentals`). Its free
+         tier is restricted to the demo symbol (AAPL), so a 403 is remembered
+         in `_twelvedata_fill_plan_restricted` and not retried per ticker.
+      3. Any field still None is tried on Twelve Data (only when Finnhub was
+         the primary), then on yfinance's unofficial `Ticker.info` (see
+         `_fill_missing_fundamentals_from_yfinance`). Only missing fields are
+         filled, a value already present is never overwritten.
+      4. If neither Finnhub nor Twelve Data gave anything, yfinance alone is
+         the source.
 
-    Returns None (not an exception) if every source fails or neither Finnhub
-    nor Twelve Data is configured — fundamentals are an enrichment, not
-    something that should ever block the rest of the app. May still raise
-    TwelveDataPlanRestricted, but ONLY from step 2 above (Twelve Data as
-    primary source) — callers already handle that distinctly. Steps 3 and 4
-    are both silent by design: a gap that can't be filled just stays a gap,
-    it must never discard a field an earlier step already found.
+    Returns None (not an exception) if every source fails. Raises
+    TwelveDataPlanRestricted only when Twelve Data answered 403 AND yfinance
+    had nothing either, so the UI can still explain the empty result.
     """
+    global _twelvedata_fill_plan_restricted
+    restricted: TwelveDataPlanRestricted | None = None
     result = _fetch_finnhub_fundamentals(ticker)
     if result is not None:
         result = _fill_missing_fundamentals_from_twelvedata(ticker, result)
+    elif not _twelvedata_fill_plan_restricted:
+        try:
+            result = _fetch_twelvedata_fundamentals(ticker)
+        except TwelveDataPlanRestricted as exc:
+            _twelvedata_fill_plan_restricted = True
+            restricted = exc
+
+    if result is None:
+        result = _fetch_yfinance_fundamentals(ticker)
+        if result is None and restricted is not None:
+            raise restricted
+    else:
         result = _fill_missing_fundamentals_from_yfinance(ticker, result)
-        return result
-    return _fetch_twelvedata_fundamentals(ticker)
+
+    if result is not None:
+        result.setdefault(
+            "field_sources", {f: result["source"] for f in _FUNDAMENTALS_FILLABLE_FIELDS if result.get(f) is not None},
+        )
+    return result
