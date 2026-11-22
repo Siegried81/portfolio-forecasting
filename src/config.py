@@ -265,8 +265,8 @@ class LLMSettings:
     finnhub_api_key: str | None = field(default_factory=lambda: os.getenv("FINNHUB_API_KEY") or None)
     fred_api_key: str | None = field(default_factory=lambda: os.getenv("FRED_API_KEY") or None)
     twelvedata_api_key: str | None = field(default_factory=lambda: os.getenv("TWELVEDATA_API_KEY") or None)
-    # Alpha Vantage: the FOURTH and last-resort market-data tier, tried only
-    # after yfinance, direct Yahoo, AND Tiingo/Twelve Data have all failed —
+    # Alpha Vantage: the last-resort market-data tier, tried only after
+    # yfinance, direct Yahoo, Tiingo AND Twelve Data have all failed —
     # its free tier (25 requests/day) is the stingiest of this app's market-
     # data sources. See market_data.py's fetch_adjusted_close docstring.
     alpha_vantage_api_key: str | None = field(default_factory=lambda: os.getenv("ALPHA_VANTAGE_API_KEY") or None)
@@ -324,5 +324,5 @@ FINANCIAL_ADVICE_DISCLAIMER: str = (
 # as more trustworthy than the cached one. News is time-sensitive — a day-old corpus is
 # still useful grounding context for the chatbot, but shouldn't be presented as current
 # indefinitely. Only takes effect when REDIS_URL is set (see cache.py); with no Redis
-# configured, the corpus stays session-only, exactly as before this feature existed.
+# configured, the corpus stays session-only.
 RAG_CHUNK_PERSISTENCE_TTL_SECONDS: int = 24 * 3600

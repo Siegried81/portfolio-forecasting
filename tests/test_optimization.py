@@ -142,7 +142,7 @@ def _five_asset_mu_cov() -> tuple[pd.Series, pd.DataFrame]:
 @pytest.mark.parametrize("weight_bounds", [(0.0, 0.3), (-0.3, 0.3)])
 def test_efficient_frontier_points_sweeps_up_to_the_bounded_max_return(weight_bounds):
     # With a 30% cap the best feasible portfolio is a capped blend, far below
-    # mu.max(); sweeping up to mu.max() used to leave only a handful of points.
+    # mu.max(); sweeping up to mu.max() would leave only a handful of points.
     mu, cov = _five_asset_mu_cov()
     from pypfopt import EfficientFrontier
     bounded_max = EfficientFrontier(mu, cov, weight_bounds=weight_bounds)._max_return()

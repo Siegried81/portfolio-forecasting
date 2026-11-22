@@ -26,7 +26,6 @@ class EnvCheck:
     var_name: str
     unlocks: str
     signup_url: str
-    required: bool = False
 
 
 CHECKS: list[EnvCheck] = [
@@ -87,12 +86,6 @@ def main() -> None:
     print("\n=== Never need a key ===")
     for name in NO_KEY_NEEDED:
         print(f"  🔓 {name}")
-
-    required_missing = [c for c in missing if c.required]
-    if required_missing:
-        print("\n⚠️  Missing required configuration:")
-        for c in required_missing:
-            print(f"  {c.var_name} — {c.unlocks}")
 
     print(f"\n{len(configured)}/{len(CHECKS)} optional keys configured. "
           "This is informational only — every key above is optional; the app runs without any of them.")

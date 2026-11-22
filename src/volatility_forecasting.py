@@ -1,9 +1,8 @@
 """
-Forecasted covariance via GARCH(1,1) — the direct answer to a gap this app's
-own docs used to flag plainly: in `optimize_max_sharpe`'s three-portfolio
-comparison, only mu (expected return) ever came from the forecasting layer;
-the covariance matrix stayed historical even for the "Forecast-based"
-portfolio (see `optimization.py`'s module docstring). This module forecasts
+Forecasted covariance via GARCH(1,1), the answer to a gap in the
+three-portfolio comparison: only mu (expected return) comes from the
+forecasting layer, and the covariance matrix stays historical even for the
+"Forecast-based" portfolio (see `optimization.py`'s module docstring). This module forecasts
 the VOLATILITY (diagonal) half of that gap.
 
 What this forecasts, precisely, and what it deliberately still doesn't:

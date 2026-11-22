@@ -3,8 +3,8 @@ Macro data via FRED (Federal Reserve Economic Data — free, api key at
 fred.stlouisfed.org/docs/api/api_key.html).
 
 Why this earns its place (vs. NewsAPI, Alpha Vantage, Finnhub, all of which
-mostly duplicate what yfinance/NewsAPI already cover): the app's risk-free rate
-was a hardcoded guess (`DEFAULT_RISK_FREE_RATE = 0.04` in config.py). For a tool
+mostly duplicate what yfinance/NewsAPI already cover): without it the risk-free
+rate would be a hardcoded guess (`DEFAULT_RISK_FREE_RATE = 0.04` in config.py). For a tool
 built to demonstrate finance-engineering competence, guessing a rate that's
 published daily and free to fetch is the kind of shortcut a real reviewer would
 flag. FRED's 3-month T-bill series (DGS3MO) is the standard proxy for the
@@ -18,8 +18,6 @@ never block the app, since the user-adjustable slider is always the fallback.
 from __future__ import annotations
 
 import datetime as dt
-
-import requests
 
 from src.cache import cached
 from src.config import LLM_SETTINGS

@@ -25,7 +25,6 @@ from typing import Any
 from src.config import DEFAULT_RISK_FREE_RATE, TRADING_DAYS_PER_YEAR
 
 MIN_OBSERVATIONS_FOR_ADF = 20  # statsmodels itself warns below ~20 the test is unreliable
-MIN_OBSERVATIONS_FOR_HURST = 40  # needs max_lag*2 at minimum; a bit of slack above that
 
 
 def adf_stationarity_test(returns: pd.Series) -> dict[str, Any]:
@@ -48,7 +47,7 @@ def adf_stationarity_test(returns: pd.Series) -> dict[str, Any]:
     if len(clean) < MIN_OBSERVATIONS_FOR_ADF:
         return {"adf_statistic": None, "p_value": None, "is_stationary": None}
     try:
-        statistic, p_value, *_ = adfuller(clean, autolag="AIC")
+        statistic, p_value, *_ = adfuller(clean, autolag="AIC", result_object=False)
     except Exception:
         return {"adf_statistic": None, "p_value": None, "is_stationary": None}
     # bool(...) matters here: p_value is numpy.float64, so p_value < 0.05 is a

@@ -350,7 +350,12 @@ def answer_portfolio_question(
     # that actually exists instead of a plausible-sounding invented one. See
     # src/academic_search.py's module docstring for the full rationale.
     academic_block = ""
-    from src.academic_search import detect_methodology_terms, format_papers_for_prompt, search_academic_papers
+    from src.academic_search import (
+        METHODOLOGY_SEARCH_QUERIES,
+        detect_methodology_terms,
+        format_papers_for_prompt,
+        search_academic_papers,
+    )
     matched_terms = detect_methodology_terms(question)
     if matched_terms:
         # One search per DISTINCT query string (several terms can share the
@@ -359,7 +364,6 @@ def answer_portfolio_question(
         # Every distinct query is searched: the prompt tells the model to cite
         # ONLY these papers, so a question naming two methods must get papers
         # for both. Papers found by more than one query appear once.
-        from src.academic_search import METHODOLOGY_SEARCH_QUERIES
         queries = list(dict.fromkeys(METHODOLOGY_SEARCH_QUERIES[t] for t in matched_terms))
         papers: list[dict[str, Any]] = []
         seen_titles: set[str] = set()

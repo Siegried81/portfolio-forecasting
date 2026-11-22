@@ -217,6 +217,11 @@ def track_model_runs(
                 frequency=frequency,
             )
 
+            if results.empty:
+                raise ValueError(
+                    f"No walk-forward window could be scored for {model_name}: no ticker has "
+                    f"{min_train_periods}+ prices before the first window."
+                )
             summary = summarise_walk_forward(results)
             metrics: dict[str, float] = {}
             if "Forecast-based" in summary.index:

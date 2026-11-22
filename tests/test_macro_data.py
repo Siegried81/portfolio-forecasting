@@ -3,6 +3,7 @@ import dataclasses
 
 import pytest
 
+import src.http_utils as http_utils
 import src.macro_data as macro_data
 from src.macro_data import _fetch_fred_series_latest, _fetch_fred_yoy_change
 
@@ -39,7 +40,7 @@ def _fake_key(monkeypatch):
 
 def test_fetch_fred_series_latest_default_divides_by_100(monkeypatch):
     monkeypatch.setattr(
-        macro_data.requests, "get",
+        http_utils.requests, "get",
         lambda *a, **k: _FakeResponse(_fred_observations({"2026-09-01": "4.12"})),
     )
     assert _fetch_fred_series_latest("DGS10") == pytest.approx(0.0412)
@@ -47,7 +48,7 @@ def test_fetch_fred_series_latest_default_divides_by_100(monkeypatch):
 
 def test_fetch_fred_series_latest_sahm_rule_must_not_be_divided(monkeypatch):
     monkeypatch.setattr(
-        macro_data.requests, "get",
+        http_utils.requests, "get",
         lambda *a, **k: _FakeResponse(_fred_observations({"2026-09-01": "0.55"})),
     )
     assert _fetch_fred_series_latest("SAHMREALTIME", divide_by=1.0) == pytest.approx(0.55)
@@ -55,7 +56,7 @@ def test_fetch_fred_series_latest_sahm_rule_must_not_be_divided(monkeypatch):
 
 def test_fetch_fred_series_latest_skips_missing_values(monkeypatch):
     monkeypatch.setattr(
-        macro_data.requests, "get",
+        http_utils.requests, "get",
         lambda *a, **k: _FakeResponse(_fred_observations({"2026-09-01": ".", "2026-08-01": "3.90"})),
     )
     assert _fetch_fred_series_latest("DGS10") == pytest.approx(0.0390)
@@ -89,14 +90,14 @@ def test_fetch_fred_yoy_change_computes_expected_ratio(monkeypatch):
             values[date] = "300.0"
         else:
             values[date] = "305.0"
-    monkeypatch.setattr(macro_data.requests, "get", lambda *a, **k: _FakeResponse(_fred_observations(values)))
+    monkeypatch.setattr(http_utils.requests, "get", lambda *a, **k: _FakeResponse(_fred_observations(values)))
     result = _fetch_fred_yoy_change("CPIAUCSL")
     assert result == pytest.approx(310.0 / 300.0 - 1.0, abs=1e-6)
 
 
 def test_fetch_fred_yoy_change_none_with_too_little_history(monkeypatch):
     values = {"2026-08-01": "310.0", "2026-07-01": "308.0"}
-    monkeypatch.setattr(macro_data.requests, "get", lambda *a, **k: _FakeResponse(_fred_observations(values)))
+    monkeypatch.setattr(http_utils.requests, "get", lambda *a, **k: _FakeResponse(_fred_observations(values)))
     assert _fetch_fred_yoy_change("CPIAUCSL") is None
 
 
@@ -131,7 +132,7 @@ def test_fetch_macro_snapshot_includes_gdp_and_industrial_production(monkeypatch
             return _FakeResponse(_fred_observations(values))
         return _FakeResponse(_fred_observations({"2026-08-01": "4.00"}))
 
-    monkeypatch.setattr(macro_data.requests, "get", fake_get)
+    monkeypatch.setattr(http_utils.requests, "get", fake_get)
     snapshot = macro_data.fetch_macro_snapshot()
 
     assert snapshot["gdp_growth_qoq_annualized"] == pytest.approx(0.028, abs=1e-6)
@@ -151,7 +152,7 @@ def test_fetch_current_risk_free_rate_delegates_to_macro_snapshot(monkeypatch):
         value = "3.94" if params["series_id"] == macro_data.RISK_FREE_SERIES_ID else "1.00"
         return _FakeResponse(_fred_observations({"2026-09-01": value}))
 
-    monkeypatch.setattr(macro_data.requests, "get", fake_get)
+    monkeypatch.setattr(http_utils.requests, "get", fake_get)
     snapshot_value = macro_data.fetch_macro_snapshot()["three_month_yield"]
     rate = macro_data.fetch_current_risk_free_rate()
     assert rate == snapshot_value == pytest.approx(0.0394)

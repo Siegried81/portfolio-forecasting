@@ -99,7 +99,7 @@ def truncate_to_token_budget(text: str, max_tokens: int = MAX_CONTEXT_TOKENS) ->
 def _call_groq(messages: list[Message], temperature: float, max_tokens: int) -> str:
     if not LLM_SETTINGS.groq_api_keys:
         raise LLMUnavailableError("No GROQ_API_KEY configured.")
-    from groq import Groq, RateLimitError  # imported lazily — package is optional if only Ollama is used
+    from groq import AuthenticationError, Groq, RateLimitError  # imported lazily — package is optional if only Ollama is used
 
     last_error: Exception | None = None
     for i, key in enumerate(LLM_SETTINGS.groq_api_keys):
@@ -124,17 +124,14 @@ def _call_groq(messages: list[Message], temperature: float, max_tokens: int) -> 
                 max_tokens=max_tokens,
             )
             return response.choices[0].message.content or ""
-        except RateLimitError as exc:
-            # This specific key is exhausted (429) — rotate to the next one, if any.
-            logger.warning("Groq key #%d rate-limited, trying next key: %s", i + 1, exc)
+        except (RateLimitError, AuthenticationError) as exc:
+            # Only this key is at fault (429 exhausted, or 401 revoked/mistyped):
+            # the next one may still work. Any OTHER error (deprecated model,
+            # network) hits every key equally, so it propagates and chat() moves
+            # on to the next tier instead of cycling through all 5 keys.
+            logger.warning("Groq key #%d rejected (%s), trying next key: %s", i + 1, type(exc).__name__, exc)
             last_error = exc
-            continue
-        except Exception:
-            # Any OTHER error (bad key, model deprecated, network) affects every key
-            # equally — rotating won't help, so fail fast to the next fallback tier
-            # instead of burning time cycling through all 5 keys for nothing.
-            raise
-    raise LLMUnavailableError(f"All {len(LLM_SETTINGS.groq_api_keys)} Groq keys are rate-limited: {last_error}")
+    raise LLMUnavailableError(f"All {len(LLM_SETTINGS.groq_api_keys)} Groq keys were rate-limited or rejected: {last_error}")
 
 
 @dataclass(frozen=True)

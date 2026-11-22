@@ -1,8 +1,6 @@
 """Unit tests for src/cache.py. Redis paths patch REDIS_URL/_get_redis_client instead of needing a real server."""
 from __future__ import annotations
 
-import dataclasses
-
 import pytest
 import streamlit as st
 

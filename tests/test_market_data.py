@@ -2,8 +2,8 @@
 Unit tests for src/market_data.py. Fully mocked — no real network calls.
 Priorities: a multi-ticker Twelve Data response that drops a bad/delisted
 symbol must not corrupt the tickers that did come back; the Yahoo circuit
-breaker actually skips yfinance/direct-Yahoo once tripped; _redact_api_key
-never leaks a key into a message that could reach st.error().
+breaker actually skips yfinance/direct-Yahoo once tripped; the source caption
+never presents fallback prices as plain Yahoo data.
 """
 import datetime as dt
 import dataclasses
@@ -26,9 +26,10 @@ from src.market_data import (
     _fill_missing_fundamentals_from_twelvedata,
     _fill_missing_fundamentals_from_yfinance,
     _fetch_yfinance_fundamentals,
-    _redact_api_key,
     fetch_adjusted_close,
     fetch_fundamentals,
+    fundamentals_fill_notice,
+    price_source_notice,
 )
 
 
@@ -61,14 +62,31 @@ class _FakeResponse:
 
 
 # ---------------------------------------------------------------------------
-# _redact_api_key
+# price_source_notice
 # ---------------------------------------------------------------------------
 
-def test_redact_api_key_strips_the_value():
-    text = "GET https://api.twelvedata.com/time_series?symbol=AAPL&apikey=sk-super-secret-123"
-    redacted = _redact_api_key(text)
-    assert "sk-super-secret-123" not in redacted
-    assert "apikey=***REDACTED***" in redacted
+def test_price_source_notice_is_silent_when_yfinance_served_everything():
+    assert price_source_notice("yfinance") is None
+
+
+@pytest.mark.parametrize("source", [
+    "tiingo (yahoo unavailable)",
+    "twelvedata (yahoo recently unavailable)",
+    "alpha vantage (yahoo unavailable)",
+])
+def test_price_source_notice_warns_for_every_non_yahoo_provider(source):
+    notice = price_source_notice(source)
+    assert notice is not None and source in notice and "unreachable" in notice
+
+
+def test_price_source_notice_names_the_direct_yahoo_path():
+    notice = price_source_notice("yahoo direct API")
+    assert notice is not None and "direct Yahoo API" in notice
+
+
+def test_price_source_notice_names_who_filled_a_missing_ticker():
+    notice = price_source_notice("yfinance + tiingo for TSLA")
+    assert notice is not None and "yfinance + tiingo for TSLA" in notice
 
 
 # ---------------------------------------------------------------------------
@@ -500,6 +518,7 @@ def test_fetch_fundamentals_still_falls_back_entirely_when_finnhub_returns_nothi
         market_data, "_fetch_twelvedata_fundamentals",
         lambda ticker: {"name": "Apple Inc", "source": "Twelve Data", "pe_ratio": 36.2},
     )
+    monkeypatch.setattr(market_data, "_fetch_yfinance_fundamentals", lambda ticker: None)
     result = fetch_fundamentals("AAPL")
     assert result["source"] == "Twelve Data"
 
@@ -511,8 +530,81 @@ def test_fetch_fundamentals_propagates_plan_restricted_only_from_the_primary_pat
         raise TwelveDataPlanRestricted("requires pro plan")
 
     monkeypatch.setattr(market_data, "_fetch_twelvedata_fundamentals", _raise)
+    monkeypatch.setattr(market_data, "_fetch_yfinance_fundamentals", lambda ticker: None)
     with pytest.raises(TwelveDataPlanRestricted):
         fetch_fundamentals("MSFT")
+
+
+# ---------------------------------------------------------------------------
+# fetch_fundamentals: yfinance as the gap-filler and as the last source
+# ---------------------------------------------------------------------------
+
+_YF_FUNDAMENTALS = {
+    "name": "Apple Inc.", "source": "yfinance", "market_cap": 4.0e12, "pe_ratio": 99.0, "forward_pe": 32.9,
+    "peg_ratio": 2.4, "price_to_book": 50.0, "beta": 1.2, "52w_high": 340.0, "52w_low": 220.0,
+}
+
+
+def test_fetch_fundamentals_uses_yfinance_alone_without_finnhub_or_twelvedata(monkeypatch):
+    monkeypatch.setattr(market_data, "_fetch_finnhub_fundamentals", lambda ticker: None)
+    monkeypatch.setattr(market_data, "_fetch_twelvedata_fundamentals", lambda ticker: None)
+    monkeypatch.setattr(market_data, "_fetch_yfinance_fundamentals", lambda ticker: dict(_YF_FUNDAMENTALS))
+    result = fetch_fundamentals("AAPL")
+    assert result["source"] == "yfinance"
+    assert result["forward_pe"] == 32.9
+    assert set(result["field_sources"].values()) == {"yfinance"}
+    assert fundamentals_fill_notice(result) is None
+
+
+def test_fetch_fundamentals_yfinance_fills_only_missing_fields_and_never_overwrites(monkeypatch):
+    monkeypatch.setattr(market_data, "_fetch_finnhub_fundamentals", lambda ticker: _finnhub_result())
+    monkeypatch.setattr(market_data, "_fetch_twelvedata_fundamentals", lambda ticker: None)
+    monkeypatch.setattr(market_data, "_fetch_yfinance_fundamentals", lambda ticker: dict(_YF_FUNDAMENTALS))
+    result = fetch_fundamentals("AAPL")
+    assert result["pe_ratio"] == 36.2  # Finnhub's value, not yfinance's 99.0
+    assert result["beta"] == 1.10
+    assert result["forward_pe"] == 32.9  # a gap in Finnhub's answer
+    assert result["dividend_yield"] == 0.0051  # yfinance never fills dividend_yield
+    assert result["field_sources"]["pe_ratio"] == "Finnhub"
+    assert result["field_sources"]["forward_pe"] == "yfinance"
+    assert result["source"] == "Finnhub + yfinance"
+    assert fundamentals_fill_notice(result) == "forward_pe, peg_ratio, price_to_book from yfinance"
+
+
+def test_fetch_fundamentals_twelvedata_primary_is_completed_by_yfinance(monkeypatch):
+    monkeypatch.setattr(market_data, "_fetch_finnhub_fundamentals", lambda ticker: None)
+    monkeypatch.setattr(
+        market_data, "_fetch_twelvedata_fundamentals",
+        lambda ticker: {"name": "Apple Inc", "source": "Twelve Data", "pe_ratio": 36.2, "beta": 1.1},
+    )
+    monkeypatch.setattr(market_data, "_fetch_yfinance_fundamentals", lambda ticker: dict(_YF_FUNDAMENTALS))
+    result = fetch_fundamentals("AAPL")
+    assert result["pe_ratio"] == 36.2 and result["beta"] == 1.1
+    assert result["market_cap"] == 4.0e12
+    assert result["source"] == "Twelve Data + yfinance"
+    assert result["field_sources"]["pe_ratio"] == "Twelve Data"
+    assert result["field_sources"]["market_cap"] == "yfinance"
+
+
+def test_fetch_fundamentals_falls_to_yfinance_on_a_twelvedata_403_and_stops_asking(monkeypatch):
+    monkeypatch.setattr(market_data, "_fetch_finnhub_fundamentals", lambda ticker: None)
+    calls = []
+
+    def _raise(ticker):
+        calls.append(ticker)
+        raise TwelveDataPlanRestricted("requires pro plan")
+
+    monkeypatch.setattr(market_data, "_fetch_twelvedata_fundamentals", _raise)
+    monkeypatch.setattr(market_data, "_fetch_yfinance_fundamentals", lambda ticker: dict(_YF_FUNDAMENTALS))
+    assert fetch_fundamentals("MSFT")["source"] == "yfinance"
+    assert fetch_fundamentals("CSCO")["source"] == "yfinance"
+    assert calls == ["MSFT"]  # the 403 is remembered, not repeated per ticker
+
+
+def test_fundamentals_fill_notice_is_silent_for_a_single_provider_or_no_result():
+    assert fundamentals_fill_notice(None) is None
+    assert fundamentals_fill_notice({"source": "Finnhub", "field_sources": {"beta": "Finnhub"}}) is None
+    assert fundamentals_fill_notice({"source": "Finnhub"}) is None
 
 
 # ---------------------------------------------------------------------------
@@ -818,10 +910,3 @@ def test_download_yahoo_direct_falls_back_to_utc_dates_without_a_timezone(monkey
     result = market_data._download_yahoo_direct(["AAPL"], dt.date(2024, 1, 1), dt.date(2024, 1, 5))
 
     assert list(result.index) == [pd.Timestamp("2024-01-02")]
-
-
-def test_redact_api_key_also_strips_finnhub_token():
-    text = "401 Client Error for url: https://finnhub.io/api/v1/stock/metric?symbol=AAPL&token=finnhub-secret"
-    redacted = _redact_api_key(text)
-    assert "finnhub-secret" not in redacted
-    assert "token=***REDACTED***" in redacted

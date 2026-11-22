@@ -262,7 +262,7 @@ def test_answer_portfolio_question_news_text_cannot_close_the_retrieved_news_blo
 
 
 def test_answer_portfolio_question_truncates_data_blocks_not_the_prompt_tail(monkeypatch):
-    """An oversized results context used to push the news block, the closing
+    """An oversized results context must not push the news block, the closing
     </portfolio_data> tag and the news instructions off the end of the prompt."""
     from src.ai_features import answer_portfolio_question
     from src.rag import Chunk
